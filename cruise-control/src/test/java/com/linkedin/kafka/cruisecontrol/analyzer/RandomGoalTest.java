@@ -22,6 +22,7 @@ import com.linkedin.kafka.cruisecontrol.analyzer.goals.RackAwareDistributionGoal
 import com.linkedin.kafka.cruisecontrol.analyzer.goals.RackAwareGoal;
 import com.linkedin.kafka.cruisecontrol.analyzer.goals.ReplicaCapacityGoal;
 import com.linkedin.kafka.cruisecontrol.analyzer.goals.ReplicaDistributionGoal;
+import com.linkedin.kafka.cruisecontrol.analyzer.goals.TopicLeadershipDistributionGoal;
 import com.linkedin.kafka.cruisecontrol.analyzer.goals.TopicReplicaDistributionGoal;
 import com.linkedin.kafka.cruisecontrol.config.KafkaCruiseControlConfig;
 import com.linkedin.kafka.cruisecontrol.common.ClusterProperty;
@@ -29,6 +30,7 @@ import com.linkedin.kafka.cruisecontrol.config.constants.AnalyzerConfig;
 import com.linkedin.kafka.cruisecontrol.model.RandomCluster;
 import com.linkedin.kafka.cruisecontrol.common.TestConstants;
 import com.linkedin.kafka.cruisecontrol.model.ClusterModel;
+
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -36,6 +38,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+
 import java.util.Properties;
 import java.util.Random;
 import org.junit.Rule;
@@ -76,6 +79,7 @@ public class RandomGoalTest {
                                                        RackAwareDistributionGoal.class.getName(),
                                                        MinTopicLeadersPerBrokerGoal.class.getName(),
                                                        ReplicaCapacityGoal.class.getName(),
+                                                       TopicLeadershipDistributionGoal.class.getName(),
                                                        DiskCapacityGoal.class.getName(),
                                                        NetworkInboundCapacityGoal.class.getName(),
                                                        NetworkOutboundCapacityGoal.class.getName(),
@@ -99,12 +103,12 @@ public class RandomGoalTest {
 
     List<OptimizationVerifier.Verification> verifications = Arrays.asList(NEW_BROKERS, BROKEN_BROKERS, REGRESSION);
 
-    // Test: Single goal at a time.
+    // Test: Single goal at a time. [0-18]
     for (String goalName: goalsSortedByPriority) {
       p.add(params(Collections.emptyMap(), Collections.singletonList(goalName), balancingConstraint, verifications));
     }
 
-    // Test: Consecutive repetition of the same goal (goalRepetition times each).
+    // Test: Consecutive repetition of the same goal (goalRepetition times each). [19-36]
     for (String goalName : goalsSortedByPriority) {
       List<String> repeatedGoalNamesByPriority = new ArrayList<>();
       for (int i = 0; i < goalRepetition; i++) {
@@ -113,23 +117,24 @@ public class RandomGoalTest {
       p.add(params(Collections.emptyMap(), repeatedGoalNamesByPriority, balancingConstraint, verifications));
     }
 
-    // Test: Nested repetition of the same goal (goalRepetition times each).
+    // Test: Nested repetition of the same goal (goalRepetition times each). [37]
     List<String> nonRepetitiveGoalNamesByPriority = new ArrayList<>();
     for (int i = 0; i < goalRepetition; i++) {
       nonRepetitiveGoalNamesByPriority.addAll(goalsSortedByPriority);
     }
     p.add(params(Collections.emptyMap(), nonRepetitiveGoalNamesByPriority, balancingConstraint, verifications));
 
-    // Test: No goal.
+    // Test: No goal. [38]
     p.add(params(Collections.emptyMap(), Collections.emptyList(), balancingConstraint, verifications));
 
-    // Test shuffled soft goals.
+    // Test shuffled soft goals. [39]
     List<String> shuffledSoftGoalNames = new ArrayList<>(goalsSortedByPriority);
     // Remove the hard goals.
     shuffledSoftGoalNames.remove(RackAwareGoal.class.getName());
     shuffledSoftGoalNames.remove(RackAwareDistributionGoal.class.getName());
     shuffledSoftGoalNames.remove(MinTopicLeadersPerBrokerGoal.class.getName());
     shuffledSoftGoalNames.remove(ReplicaCapacityGoal.class.getName());
+    shuffledSoftGoalNames.remove(TopicLeadershipDistributionGoal.class.getName());
     shuffledSoftGoalNames.remove(CpuCapacityGoal.class.getName());
     shuffledSoftGoalNames.remove(DiskCapacityGoal.class.getName());
     shuffledSoftGoalNames.remove(NetworkInboundCapacityGoal.class.getName());
