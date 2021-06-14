@@ -107,9 +107,6 @@ public class PrometheusMetricSampler extends AbstractMetricSampler {
 
         try {
             HttpHost host = HttpHost.create(endpoint);
-            if (host.getPort() < 0) {
-                throw new IllegalArgumentException();
-            }
             _httpClient = HttpClients.createDefault();
             _prometheusAdapter = new PrometheusAdapter(_httpClient, host, _samplingIntervalMs);
         } catch (IllegalArgumentException ex) {
