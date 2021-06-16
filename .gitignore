@@ -17,3 +17,7 @@ target/
 access.log
 *.egg
 /bin/
+
+# Remove these later
+cruise-control/src/test/java/com/linkedin/kafka/cruisecontrol/monitor/sampling/newrelic/
+*/NewRelicAdapterTest.java
