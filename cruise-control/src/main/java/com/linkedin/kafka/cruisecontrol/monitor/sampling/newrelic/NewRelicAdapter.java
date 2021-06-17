@@ -25,7 +25,7 @@ import java.util.List;
 
 import static com.linkedin.cruisecontrol.common.utils.Utils.validateNotNull;
 
-public class NewRelicAdapter {
+class NewRelicAdapter {
     private static final ObjectMapper JSON = new ObjectMapper();
 
     private static final String GRAPHQL_API_PATH = "/graphql";
@@ -70,7 +70,17 @@ public class NewRelicAdapter {
 
             List<NewRelicQueryResult> results = new ArrayList<>();
 
+            // Can be null upon invalid query or just something else going wrong on serverside
+            if (resultsJson == null) {
+                return results;
+            }
+
+            int count = 0;
             for (JsonNode resultJson : resultsJson) {
+                if (count == 0) {
+                    System.out.printf("ResultJSON: %s%n", resultJson);
+                }
+                count++;
                 results.add(new NewRelicQueryResult(resultJson));
             }
 

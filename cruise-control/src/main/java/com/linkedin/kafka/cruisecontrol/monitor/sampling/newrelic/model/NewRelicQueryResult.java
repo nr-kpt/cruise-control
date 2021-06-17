@@ -5,6 +5,7 @@
 package com.linkedin.kafka.cruisecontrol.monitor.sampling.newrelic.model;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.JsonNodeType;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -18,27 +19,46 @@ public class NewRelicQueryResult {
     public static final String BEGIN_TIME_SECONDS_ATTR = "beginTimeSeconds";
     public static final String END_TIME_SECONDS_ATTR = "endTimeSeconds";
     public static final String FACET_ATTR = "facet";
+    public static final String CLUSTER = "cluster";
+    public static final String BROKER = "broker";
+    public static final String TOPIC = "topic";
 
     private static final Set<String> RESERVED_ATTRS = new HashSet<>();
     static {
         RESERVED_ATTRS.add(BEGIN_TIME_SECONDS_ATTR);
         RESERVED_ATTRS.add(END_TIME_SECONDS_ATTR);
         RESERVED_ATTRS.add(FACET_ATTR);
+        RESERVED_ATTRS.add(BROKER);
+        RESERVED_ATTRS.add(TOPIC);
+
+        // Note that we don't need to collect this since Cruise Control
+        // only looks at data from one cluster
+        RESERVED_ATTRS.add(CLUSTER);
     }
 
-    private final long _beginTimeSeconds;
-    private final long _endTimeSeconds;
+    // private final long _beginTimeSeconds;
+    // private final long _endTimeSeconds;
 
     private final List<String> _facets = new ArrayList<>();
 
     private final Map<String, NewRelicResultValue> _results = new HashMap<>();
 
     public NewRelicQueryResult(JsonNode result) {
-        _beginTimeSeconds = result.get(BEGIN_TIME_SECONDS_ATTR).asLong();
-        _endTimeSeconds = result.get(END_TIME_SECONDS_ATTR).asLong();
+        // _beginTimeSeconds = result.get(BEGIN_TIME_SECONDS_ATTR).asLong();
+        // _endTimeSeconds = result.get(END_TIME_SECONDS_ATTR).asLong();
 
-        for (JsonNode facet : result.get(FACET_ATTR)) {
-            _facets.add(facet.asText());
+        // If we facet on multiple attributes, facets will be an array
+        // and have multiple elements. If we facet on only one element,
+        // facet will be a singular element so we handle this case here
+        if (result.has(FACET_ATTR)) {
+            JsonNode facets = result.get(FACET_ATTR);
+            if (facets.getNodeType() == JsonNodeType.ARRAY) {
+                for (JsonNode facet : facets) {
+                    _facets.add(facet.asText());
+                }
+            } else {
+                _facets.add(facets.asText());
+            }
         }
 
         Iterator<String> fieldNames = result.fieldNames();
@@ -55,16 +75,16 @@ public class NewRelicQueryResult {
 
     @Override
     public String toString() {
-        return "Results: " + _results.toString();
+        return "NewRelic Query Result: " + _results.toString();
     }
 
-    public long getBeginTimeSeconds() {
-        return _beginTimeSeconds;
-    }
+    //public long getBeginTimeSeconds() {
+    //    return _beginTimeSeconds;
+    //}
 
-    public long getEndTimeSeconds() {
-        return _endTimeSeconds;
-    }
+    //public long getEndTimeSeconds() {
+    //    return _endTimeSeconds;
+    //}
 
     public List<String> getFacets() {
         return _facets;
