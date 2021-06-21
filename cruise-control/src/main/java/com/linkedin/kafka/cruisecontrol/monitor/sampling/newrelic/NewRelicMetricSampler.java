@@ -9,13 +9,10 @@ import com.linkedin.kafka.cruisecontrol.metricsreporter.metric.RawMetricType;
 import com.linkedin.kafka.cruisecontrol.monitor.sampling.AbstractMetricSampler;
 import com.linkedin.kafka.cruisecontrol.monitor.sampling.MetricSamplerOptions;
 import com.linkedin.kafka.cruisecontrol.monitor.sampling.newrelic.model.NewRelicQueryResult;
-import com.linkedin.kafka.cruisecontrol.monitor.sampling.prometheus.InvalidPrometheusResultException;
-import com.linkedin.kafka.cruisecontrol.monitor.sampling.prometheus.model.PrometheusQueryResult;
 import org.apache.http.impl.client.CloseableHttpClient;
 import org.apache.kafka.common.Cluster;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
 import java.io.IOException;
 import java.util.HashMap;
 import java.util.List;
@@ -79,9 +76,9 @@ public class NewRelicMetricSampler extends AbstractMetricSampler {
                         case TOPIC:
                             metricsAdded += addTopicMetrics(metricSamplerOptions.cluster(), metricType, result);
                             break;
+                        // We are handling partition level case separately since NRQL has 2000 item limit and
+                        // some partition level queries may have more than 2000 items
                         case PARTITION:
-                            metricsAdded += addPartitionMetrics(metricSamplerOptions.cluster(), metricType, result);
-                            break;
                         default:
                             // Not supported.
                             break;
@@ -95,6 +92,9 @@ public class NewRelicMetricSampler extends AbstractMetricSampler {
                 }
             }
         }
+        // Handling partition level case separately by going through each topic and adding partition size metrics
+        // just for that topic
+
         LOGGER.info("Added {} metric values. Skipped {} invalid query results.", metricsAdded, resultsSkipped);
         return metricsAdded;
     }
