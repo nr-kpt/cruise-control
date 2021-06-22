@@ -70,7 +70,7 @@ class NewRelicAdapter {
 
             List<NewRelicQueryResult> results = new ArrayList<>();
 
-            // Can be null upon invalid query or just something else going wrong on serverside
+            // Can be null upon invalid query or just something else going wrong on server side
             if (resultsJson == null) {
                 return results;
             }

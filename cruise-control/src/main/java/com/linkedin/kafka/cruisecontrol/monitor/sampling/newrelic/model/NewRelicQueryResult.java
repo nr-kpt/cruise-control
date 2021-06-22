@@ -46,7 +46,7 @@ public class NewRelicQueryResult {
         // If we facet on multiple attributes, facets will be an array
         // and have multiple elements. If we facet on only one element,
         // facet will be a singular element so we handle this case here
-        Map<String, RawMetricType> valueToMetricMap = NewRelicQuerySupplier.getAllTopicMap();
+        Map<String, RawMetricType> valueToMetricMap = NewRelicQuerySupplier.getBrokerMap();
         if (result.has(FACET_ATTR)) {
             JsonNode facets = result.get(FACET_ATTR);
             if (facets.getNodeType() == JsonNodeType.ARRAY) {
@@ -56,7 +56,6 @@ public class NewRelicQueryResult {
                 }
             } else {
                 _facets.add(facets.asText());
-                valueToMetricMap = NewRelicQuerySupplier.getBrokerMap();
             }
         }
 
@@ -69,7 +68,6 @@ public class NewRelicQueryResult {
             }
 
             String metricLabel = fieldName.split("\\.")[1];
-
             _results.put(valueToMetricMap.get(metricLabel), new NewRelicResultValue(fieldName, result.get(fieldName).asDouble()));
         }
     }
