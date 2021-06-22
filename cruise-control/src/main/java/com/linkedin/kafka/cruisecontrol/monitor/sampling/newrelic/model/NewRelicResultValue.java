@@ -5,16 +5,10 @@
 package com.linkedin.kafka.cruisecontrol.monitor.sampling.newrelic.model;
 
 public class NewRelicResultValue {
-    private final String _label;
     private final double _value;
 
-    NewRelicResultValue(String fieldName, double value) {
-        _label = fieldName;
-        this._value = value;
-    }
-
-    public String getLabel() {
-        return _label;
+    NewRelicResultValue(double value) {
+        _value = value;
     }
 
     public double getValue() {

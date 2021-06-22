@@ -5,7 +5,10 @@
 package com.linkedin.kafka.cruisecontrol.monitor.sampling.newrelic;
 
 import com.linkedin.kafka.cruisecontrol.exception.SamplingException;
+import com.linkedin.kafka.cruisecontrol.metricsreporter.metric.BrokerMetric;
+import com.linkedin.kafka.cruisecontrol.metricsreporter.metric.PartitionMetric;
 import com.linkedin.kafka.cruisecontrol.metricsreporter.metric.RawMetricType;
+import com.linkedin.kafka.cruisecontrol.metricsreporter.metric.TopicMetric;
 import com.linkedin.kafka.cruisecontrol.monitor.sampling.AbstractMetricSampler;
 import com.linkedin.kafka.cruisecontrol.monitor.sampling.MetricSamplerOptions;
 import com.linkedin.kafka.cruisecontrol.monitor.sampling.newrelic.model.NewRelicQueryResult;
@@ -18,6 +21,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
+
+import static com.linkedin.kafka.cruisecontrol.KafkaCruiseControlUtils.SEC_TO_MS;
 
 public class NewRelicMetricSampler extends AbstractMetricSampler {
     private static final Logger LOGGER = LoggerFactory.getLogger(NewRelicMetricSampler.class);
@@ -36,7 +41,7 @@ public class NewRelicMetricSampler extends AbstractMetricSampler {
     protected int _samplingIntervalMs;
     protected Map<String, Integer> _hostToBrokerIdMap = new HashMap<>();
     protected NewRelicAdapter _newRelicAdapter;
-    protected Map<RawMetricType, String> _metricToNewRelicQueryMap;
+    protected Map<RawMetricType.MetricScope, String> _metricToNewRelicQueryMap;
     private CloseableHttpClient _httpClient;
 
     // First thing -> need ways to be configured (I don't think as much as prometheus metric sampler)
@@ -55,8 +60,8 @@ public class NewRelicMetricSampler extends AbstractMetricSampler {
     protected int retrieveMetricsForProcessing(MetricSamplerOptions metricSamplerOptions) throws SamplingException {
         int metricsAdded = 0;
         int resultsSkipped = 0;
-        for (Map.Entry<RawMetricType, String> metricToQueryEntry : _metricToNewRelicQueryMap.entrySet()) {
-            final RawMetricType metricType = metricToQueryEntry.getKey();
+        for (Map.Entry<RawMetricType.MetricScope, String> metricToQueryEntry : _metricToNewRelicQueryMap.entrySet()) {
+            final RawMetricType.MetricScope scope = metricToQueryEntry.getKey();
             final String query = metricToQueryEntry.getValue();
             final List<NewRelicQueryResult> queryResults;
 
@@ -69,12 +74,12 @@ public class NewRelicMetricSampler extends AbstractMetricSampler {
 
             for (NewRelicQueryResult result : queryResults) {
                 try {
-                    switch (metricType.metricScope()) {
+                    switch (scope) {
                         case BROKER:
-                            metricsAdded += addBrokerMetrics(metricSamplerOptions.cluster(), metricType, result);
+                            metricsAdded += addBrokerMetrics(result);
                             break;
                         case TOPIC:
-                            metricsAdded += addTopicMetrics(metricSamplerOptions.cluster(), metricType, result);
+                            metricsAdded += addTopicMetrics(result);
                             break;
                         // We are handling partition level case separately since NRQL has 2000 item limit and
                         // some partition level queries may have more than 2000 items
@@ -99,19 +104,49 @@ public class NewRelicMetricSampler extends AbstractMetricSampler {
         return metricsAdded;
     }
 
-    private int addBrokerMetrics(Cluster cluster, RawMetricType metricType, NewRelicQueryResult queryResult)
+    private int addBrokerMetrics(NewRelicQueryResult queryResult)
             throws InvalidNewRelicResultException {
-        return 0;
+        int brokerID = queryResult.getBrokerID();
+        long time = queryResult.getTime();
+
+        int metricsAdded = 0;
+        for (Map.Entry<RawMetricType, Double> entry: queryResult.getResults().entrySet()) {
+            addMetricForProcessing(new BrokerMetric(entry.getKey(), time * SEC_TO_MS,
+                    brokerID, entry.getValue()));
+            metricsAdded++;
+        }
+        return metricsAdded;
     }
 
-    private int addTopicMetrics(Cluster cluster, RawMetricType metricType, NewRelicQueryResult queryResult)
+    private int addTopicMetrics(NewRelicQueryResult queryResult)
             throws InvalidNewRelicResultException {
-        return 0;
+        int brokerID = queryResult.getBrokerID();
+        String topic = queryResult.getTopic();
+        long time = queryResult.getTime();
+
+        int metricsAdded = 0;
+        for (Map.Entry<RawMetricType, Double> entry: queryResult.getResults().entrySet()) {
+            addMetricForProcessing(new TopicMetric(entry.getKey(), time * SEC_TO_MS,
+                    brokerID, topic, entry.getValue()));
+            metricsAdded++;
+        }
+        return metricsAdded;
     }
 
-    private int addPartitionMetrics(Cluster cluster, RawMetricType metricType, NewRelicQueryResult queryResult)
+    private int addPartitionMetrics(NewRelicQueryResult queryResult)
             throws InvalidNewRelicResultException {
-        return 0;
+        int brokerID = queryResult.getBrokerID();
+        String topic = queryResult.getTopic();
+        int partition = queryResult.getPartition();
+        long time = queryResult.getTime();
+
+        int metricsAdded = 0;
+        for (Map.Entry<RawMetricType, Double> entry: queryResult.getResults().entrySet()) {
+            addMetricForProcessing(new PartitionMetric(entry.getKey(), time * SEC_TO_MS,
+                    brokerID, topic, partition, entry.getValue()));
+            metricsAdded++;
+        }
+        return metricsAdded;
     }
 
     @Override

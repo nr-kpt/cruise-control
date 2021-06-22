@@ -5,20 +5,20 @@
 package com.linkedin.kafka.cruisecontrol.monitor.sampling.newrelic;
 
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.Map;
-import java.util.Set;
 import java.util.function.Supplier;
 import com.linkedin.kafka.cruisecontrol.metricsreporter.metric.RawMetricType;
 
 import static com.linkedin.kafka.cruisecontrol.metricsreporter.metric.RawMetricType.*;
+import static com.linkedin.kafka.cruisecontrol.metricsreporter.metric.RawMetricType.MetricScope.BROKER;
+import static com.linkedin.kafka.cruisecontrol.metricsreporter.metric.RawMetricType.MetricScope.TOPIC;
 
 /**
  * Contains the NRQL queries which will output broker, topic, and partition level
  * stats which are used by cruise control.
  */
-public class NewRelicQuerySupplier implements Supplier<Set<String>> {
-    private static final Set<String> TYPE_TO_QUERY = new HashSet<>();
+public class NewRelicQuerySupplier implements Supplier<Map<RawMetricType.MetricScope, String>> {
+    private static final Map<RawMetricType.MetricScope, String> TYPE_TO_QUERY = new HashMap<>();
 
     // Currently we are hardcoding this in -> later need to make it specific to whatever cluster
     // this cruise control instance is running on
@@ -26,6 +26,7 @@ public class NewRelicQuerySupplier implements Supplier<Set<String>> {
 
     private static final HashMap<String, RawMetricType> BROKER_METRICS = new HashMap<>();
     private static final HashMap<String, RawMetricType> TOPIC_METRICS = new HashMap<>();
+    private static final HashMap<String, RawMetricType> PARTITION_METRICS = new HashMap<>();
 
     private static final String BROKER_QUERY = "FROM KafkaBrokerStats "
             + "SELECT %s "
@@ -50,7 +51,7 @@ public class NewRelicQuerySupplier implements Supplier<Set<String>> {
         return String.format(TOPIC_QUERY, select, CLUSTER_NAME);
     }
 
-    private static String generateMaxFeatures(Map<String, RawMetricType> metrics) {
+    private static String generateFeatures(Map<String, RawMetricType> metrics) {
         StringBuffer buffer = new StringBuffer();
 
         // We want a comma on all but the last element so we will handle the last one separately
@@ -133,13 +134,13 @@ public class NewRelicQuerySupplier implements Supplier<Set<String>> {
         TOPIC_METRICS.put("totalProduceRequestsPerSec", TOPIC_PRODUCE_REQUEST_RATE);
         TOPIC_METRICS.put("messagesInPerSec", TOPIC_MESSAGES_IN_PER_SEC);
 
-        // Create the actual queries we want to run and save them
-        TYPE_TO_QUERY.add(brokerQuery(generateMaxFeatures(BROKER_METRICS)));
-        TYPE_TO_QUERY.add(topicQuery(generateMaxFeatures(TOPIC_METRICS)));
-
         // partition level metrics
-        // TYPE_TO_QUERY.put(PARTITION_SIZE,
-        //        "kafka_log_Log_Value{name=\"Size\",topic!=\"\",partition!=\"\"}");
+        // FIXME -> update with the actual string that will be output by the query
+        PARTITION_METRICS.put("", PARTITION_SIZE);
+
+        // Create the actual queries we want to run and save them
+        TYPE_TO_QUERY.put(BROKER, brokerQuery(generateFeatures(BROKER_METRICS)));
+        TYPE_TO_QUERY.put(TOPIC, topicQuery(generateFeatures(TOPIC_METRICS)));
     }
 
     public static Map<String, RawMetricType> getBrokerMap() {
@@ -150,7 +151,11 @@ public class NewRelicQuerySupplier implements Supplier<Set<String>> {
         return TOPIC_METRICS;
     }
 
-    @Override public Set<String> get() {
+    public static Map<String, RawMetricType> getPartitionMap() {
+        return TOPIC_METRICS;
+    }
+
+    @Override public Map<RawMetricType.MetricScope, String> get() {
         return TYPE_TO_QUERY;
     }
 }
