@@ -10,11 +10,6 @@ public class NewRelicResultValue {
     private final double _value;
 
     NewRelicResultValue(String fieldName, double value) {
-        // The aggregator becomes really weird when you aggregate by
-        // more than one thing (ie average(one_value) * uniqueCount(another_value)
-        // So I think its just a better idea to store all that in the _label
-
-        //String[] labelParts = fieldName.split("\\.", 2);
         _label = fieldName;
 
         this._value = value;
@@ -34,6 +29,6 @@ public class NewRelicResultValue {
 
     @Override
     public String toString() {
-        return String.format("Label: %s, Value: %s", _label, _value);
+        return String.format(" Value: %s", _value);
     }
 }

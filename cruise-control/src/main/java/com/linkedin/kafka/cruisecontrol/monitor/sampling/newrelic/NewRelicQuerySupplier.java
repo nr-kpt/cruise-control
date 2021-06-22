@@ -4,7 +4,6 @@
 
 package com.linkedin.kafka.cruisecontrol.monitor.sampling.newrelic;
 
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.function.Supplier;
@@ -23,9 +22,9 @@ public class NewRelicQuerySupplier implements Supplier<Map<RawMetricType, String
     // this cruise control instance is running on
     private static final String CLUSTER_NAME = "test-odd-wire-kafka";
 
-    private static final ArrayList<String> ALL_TOPICS_METRICS = new ArrayList<>();
-    private static final ArrayList<String> BROKER_METRICS = new ArrayList<>();
-    private static final ArrayList<String> TOPIC_METRICS = new ArrayList<>();
+    private static final HashMap<String, RawMetricType> ALL_TOPICS_METRICS = new HashMap<>();
+    private static final HashMap<String, RawMetricType> BROKER_METRICS = new HashMap<>();
+    private static final HashMap<String, RawMetricType> TOPIC_METRICS = new HashMap<>();
 
     private static final String ALL_TOPIC_SELECT_QUERY = "FROM KafkaBrokerStats "
             + "SELECT %s "
@@ -60,101 +59,103 @@ public class NewRelicQuerySupplier implements Supplier<Map<RawMetricType, String
         return String.format(TOPIC_QUERY, selectFeature, CLUSTER_NAME);
     }
 
-    private static String generateFeaturesWithSpecialAggregation(ArrayList<String> metrics,
+    private static String generateFeaturesWithSpecialAggregation(Map<String, RawMetricType> metrics,
                                                                  String aggregator, String additional) {
         StringBuffer buffer = new StringBuffer();
 
         // We want a comma on all but the last element so we will handle the last one separately
-        for (String metric: metrics.subList(0, metrics.size() - 1)) {
-            buffer.append(String.format("%s(%s) %s, ", aggregator, metric, additional));
+        String[] metricLabels = metrics.keySet().toArray(new String [0]);
+        for (int i = 0; i < metricLabels.length - 1; i++) {
+            buffer.append(String.format("%s(%s) %s, ", aggregator, metricLabels[i], additional));
         }
         // Add in last element without a comma or space
-        buffer.append(String.format("%s(%s) %s", aggregator, metrics.get(metrics.size() - 1), additional));
+        buffer.append(String.format("%s(%s) %s", aggregator, metricLabels[metricLabels.length - 1], additional));
 
         return buffer.toString();
     }
 
-    private static String generateMaxFeatures(ArrayList<String> metrics) {
+    private static String generateMaxFeatures(Map<String, RawMetricType> metrics) {
         StringBuffer buffer = new StringBuffer();
 
         // We want a comma on all but the last element so we will handle the last one separately
-        for (String metric: metrics.subList(0, metrics.size() - 1)) {
-            buffer.append(String.format("max(%s), ", metric));
+        String[] metricLabels = metrics.keySet().toArray(new String [0]);
+        for (int i = 0; i < metricLabels.length - 1; i++) {
+            buffer.append(String.format("max(%s), ", metricLabels[i]));
         }
         // Add in last element without a comma or space
-        buffer.append(String.format("max(%s)", metrics.get(metrics.size() - 1)));
+        buffer.append(String.format("max(%s)", metricLabels[metricLabels.length - 1]));
 
         return buffer.toString();
     }
 
     static {
         // broker metrics
-        ALL_TOPICS_METRICS.add("bytesInPerSec");
-        ALL_TOPICS_METRICS.add("bytesOutPerSec");
-        ALL_TOPICS_METRICS.add("replicationBytesInPerSec");
-        ALL_TOPICS_METRICS.add("replicationBytesOutPerSec");
-        ALL_TOPICS_METRICS.add("fetchRequestsPerSec");
-        ALL_TOPICS_METRICS.add("produceRequestsPerSec");
+        ALL_TOPICS_METRICS.put("bytesInPerSec", ALL_TOPIC_BYTES_IN);
+        ALL_TOPICS_METRICS.put("bytesOutPerSec", ALL_TOPIC_BYTES_OUT);
+        ALL_TOPICS_METRICS.put("replicationBytesInPerSec", ALL_TOPIC_REPLICATION_BYTES_IN);
+        ALL_TOPICS_METRICS.put("replicationBytesOutPerSec", ALL_TOPIC_REPLICATION_BYTES_OUT);
+        ALL_TOPICS_METRICS.put("fetchRequestsPerSec", ALL_TOPIC_FETCH_REQUEST_RATE);
+        ALL_TOPICS_METRICS.put("produceRequestsPerSec", ALL_TOPIC_PRODUCE_REQUEST_RATE);
 
-        BROKER_METRICS.add("cpuTotalUtilizationPercentage");
-        BROKER_METRICS.add("produceRequestsPerSec");
-        BROKER_METRICS.add("fetchConsumerRequestsPerSec");
-        BROKER_METRICS.add("fetchFollowerRequestsPerSec");
-        BROKER_METRICS.add("requestQueueSize");
-        BROKER_METRICS.add("responseQueueSize");
-        BROKER_METRICS.add("produceQueueTimeMaxMs");
-        BROKER_METRICS.add("produceQueueTimeMeanMs");
-        BROKER_METRICS.add("produceQueueTime50thPercentileMs");
-        BROKER_METRICS.add("produceQueueTime999thPercentileMs");
-        BROKER_METRICS.add("fetchConsumerQueueTimeMaxMs");
-        BROKER_METRICS.add("fetchConsumerQueueTimeMeanMs");
-        BROKER_METRICS.add("fetchConsumerQueueTime50thPercentileMs");
-        BROKER_METRICS.add("fetchConsumerQueueTime999thPercentileMs");
-        BROKER_METRICS.add("fetchFollowerQueueTimeMaxMs");
-        BROKER_METRICS.add("fetchFollowerQueueTimeMeanMs");
-        BROKER_METRICS.add("fetchFollowerQueueTime50thPercentileMs");
-        BROKER_METRICS.add("fetchFollowerQueueTime999thPercentileMs");
-        BROKER_METRICS.add("produceLocalTimeMaxMs");
-        BROKER_METRICS.add("produceLocalTimeMeanMs");
-        BROKER_METRICS.add("produceLocalTime50thPercentileMs");
-        BROKER_METRICS.add("produceLocalTime999thPercentileMs");
-        BROKER_METRICS.add("fetchConsumerLocalTimeMaxMs");
-        BROKER_METRICS.add("fetchConsumerLocalTimeMeanMs");
-        BROKER_METRICS.add("fetchConsumerLocalTime50thPercentileMs");
-        BROKER_METRICS.add("fetchConsumerLocalTime999thPercentileMs");
-        BROKER_METRICS.add("fetchFollowerLocalTimeMaxMs");
-        BROKER_METRICS.add("fetchFollowerLocalTimeMeanMs");
-        BROKER_METRICS.add("fetchFollowerLocalTime50thPercentileMs");
-        BROKER_METRICS.add("fetchFollowerLocalTime999thPercentileMs");
-        BROKER_METRICS.add("produceLatencyMaxMs");
-        BROKER_METRICS.add("produceLatencyMeanMs");
-        BROKER_METRICS.add("produceLatency50thPercentileMs");
-        BROKER_METRICS.add("produceLatency999thPercentileMs");
-        BROKER_METRICS.add("fetchConsumerLatencyMaxMs");
-        BROKER_METRICS.add("fetchConsumerLatencyMeanMs");
-        BROKER_METRICS.add("fetchConsumerLatency50thPercentileMs");
-        BROKER_METRICS.add("fetchConsumerLatency999thPercentileMs");
-        BROKER_METRICS.add("fetchFollowerLatencyMaxMs");
-        BROKER_METRICS.add("fetchFollowerLatencyMeanMs");
-        BROKER_METRICS.add("fetchFollowerLatency50thPercentileMs");
-        BROKER_METRICS.add("fetchFollowerLatency999thPercentileMs");
-        BROKER_METRICS.add("logFlushOneMinuteRateMs");
-        BROKER_METRICS.add("logFlushMaxMs");
-        BROKER_METRICS.add("logFlushMeanMs");
-        BROKER_METRICS.add("logFlush50thPercentileMs");
-        BROKER_METRICS.add("logFlush999thPercentileMs");
-        BROKER_METRICS.add("requestHandlerAvgIdlePercent");
+        BROKER_METRICS.put("cpuTotalUtilizationPercentage", BROKER_CPU_UTIL);
+        BROKER_METRICS.put("produceRequestsPerSec", BROKER_PRODUCE_REQUEST_RATE);
+        BROKER_METRICS.put("fetchConsumerRequestsPerSec", BROKER_CONSUMER_FETCH_REQUEST_RATE);
+        BROKER_METRICS.put("fetchFollowerRequestsPerSec", BROKER_FOLLOWER_FETCH_REQUEST_RATE);
+        BROKER_METRICS.put("requestQueueSize", BROKER_REQUEST_QUEUE_SIZE);
+        BROKER_METRICS.put("responseQueueSize", BROKER_RESPONSE_QUEUE_SIZE);
+        BROKER_METRICS.put("produceQueueTimeMaxMs", BROKER_PRODUCE_REQUEST_QUEUE_TIME_MS_MAX);
+        BROKER_METRICS.put("produceQueueTimeMeanMs", BROKER_PRODUCE_REQUEST_QUEUE_TIME_MS_MEAN);
+        BROKER_METRICS.put("produceQueueTime50thPercentileMs", BROKER_PRODUCE_REQUEST_QUEUE_TIME_MS_50TH);
+        BROKER_METRICS.put("produceQueueTime999thPercentileMs", BROKER_PRODUCE_REQUEST_QUEUE_TIME_MS_999TH);
+        BROKER_METRICS.put("fetchConsumerQueueTimeMaxMs", BROKER_CONSUMER_FETCH_REQUEST_QUEUE_TIME_MS_MAX);
+        BROKER_METRICS.put("fetchConsumerQueueTimeMeanMs", BROKER_CONSUMER_FETCH_REQUEST_QUEUE_TIME_MS_MEAN);
+        BROKER_METRICS.put("fetchConsumerQueueTime50thPercentileMs", BROKER_CONSUMER_FETCH_REQUEST_QUEUE_TIME_MS_50TH);
+        BROKER_METRICS.put("fetchConsumerQueueTime999thPercentileMs", BROKER_CONSUMER_FETCH_REQUEST_QUEUE_TIME_MS_999TH);
+        BROKER_METRICS.put("fetchFollowerQueueTimeMaxMs", BROKER_FOLLOWER_FETCH_REQUEST_QUEUE_TIME_MS_MAX);
+        BROKER_METRICS.put("fetchFollowerQueueTimeMeanMs", BROKER_FOLLOWER_FETCH_REQUEST_QUEUE_TIME_MS_MEAN);
+        BROKER_METRICS.put("fetchFollowerQueueTime50thPercentileMs", BROKER_FOLLOWER_FETCH_REQUEST_QUEUE_TIME_MS_50TH);
+        BROKER_METRICS.put("fetchFollowerQueueTime999thPercentileMs", BROKER_FOLLOWER_FETCH_REQUEST_QUEUE_TIME_MS_999TH);
+        BROKER_METRICS.put("produceLocalTimeMaxMs", BROKER_PRODUCE_LOCAL_TIME_MS_MAX);
+        BROKER_METRICS.put("produceLocalTimeMeanMs", BROKER_PRODUCE_LOCAL_TIME_MS_MEAN);
+        BROKER_METRICS.put("produceLocalTime50thPercentileMs", BROKER_PRODUCE_LOCAL_TIME_MS_50TH);
+        BROKER_METRICS.put("produceLocalTime999thPercentileMs", BROKER_PRODUCE_LOCAL_TIME_MS_999TH);
+        BROKER_METRICS.put("fetchConsumerLocalTimeMaxMs", BROKER_CONSUMER_FETCH_LOCAL_TIME_MS_MAX);
+        BROKER_METRICS.put("fetchConsumerLocalTimeMeanMs", BROKER_CONSUMER_FETCH_LOCAL_TIME_MS_MEAN);
+        BROKER_METRICS.put("fetchConsumerLocalTime50thPercentileMs", BROKER_CONSUMER_FETCH_LOCAL_TIME_MS_50TH);
+        BROKER_METRICS.put("fetchConsumerLocalTime999thPercentileMs", BROKER_CONSUMER_FETCH_LOCAL_TIME_MS_999TH);
+        BROKER_METRICS.put("fetchFollowerLocalTimeMaxMs", BROKER_FOLLOWER_FETCH_LOCAL_TIME_MS_MAX);
+        BROKER_METRICS.put("fetchFollowerLocalTimeMeanMs", BROKER_FOLLOWER_FETCH_LOCAL_TIME_MS_MEAN);
+        BROKER_METRICS.put("fetchFollowerLocalTime50thPercentileMs", BROKER_FOLLOWER_FETCH_LOCAL_TIME_MS_50TH);
+        BROKER_METRICS.put("fetchFollowerLocalTime999thPercentileMs", BROKER_FOLLOWER_FETCH_LOCAL_TIME_MS_999TH);
+        BROKER_METRICS.put("produceLatencyMaxMs", BROKER_PRODUCE_TOTAL_TIME_MS_MAX);
+        BROKER_METRICS.put("produceLatencyMeanMs", BROKER_PRODUCE_TOTAL_TIME_MS_MEAN);
+        BROKER_METRICS.put("produceLatency50thPercentileMs", BROKER_PRODUCE_TOTAL_TIME_MS_50TH);
+        BROKER_METRICS.put("produceLatency999thPercentileMs", BROKER_PRODUCE_TOTAL_TIME_MS_999TH);
+        BROKER_METRICS.put("fetchConsumerLatencyMaxMs", BROKER_CONSUMER_FETCH_TOTAL_TIME_MS_MAX);
+        BROKER_METRICS.put("fetchConsumerLatencyMeanMs", BROKER_CONSUMER_FETCH_TOTAL_TIME_MS_MEAN);
+        BROKER_METRICS.put("fetchConsumerLatency50thPercentileMs", BROKER_CONSUMER_FETCH_TOTAL_TIME_MS_50TH);
+        BROKER_METRICS.put("fetchConsumerLatency999thPercentileMs", BROKER_CONSUMER_FETCH_TOTAL_TIME_MS_999TH);
+        BROKER_METRICS.put("fetchFollowerLatencyMaxMs", BROKER_FOLLOWER_FETCH_TOTAL_TIME_MS_MAX);
+        BROKER_METRICS.put("fetchFollowerLatencyMeanMs", BROKER_FOLLOWER_FETCH_TOTAL_TIME_MS_MEAN);
+        BROKER_METRICS.put("fetchFollowerLatency50thPercentileMs", BROKER_FOLLOWER_FETCH_TOTAL_TIME_MS_50TH);
+        BROKER_METRICS.put("fetchFollowerLatency999thPercentileMs", BROKER_FOLLOWER_FETCH_TOTAL_TIME_MS_999TH);
+        BROKER_METRICS.put("logFlushOneMinuteRateMs", BROKER_LOG_FLUSH_RATE);
+        BROKER_METRICS.put("logFlushMaxMs", BROKER_LOG_FLUSH_TIME_MS_MAX);
+        BROKER_METRICS.put("logFlushMeanMs", BROKER_LOG_FLUSH_TIME_MS_MEAN);
+        BROKER_METRICS.put("logFlush50thPercentileMs", BROKER_LOG_FLUSH_TIME_MS_50TH);
+        BROKER_METRICS.put("logFlush999thPercentileMs", BROKER_LOG_FLUSH_TIME_MS_999TH);
+        BROKER_METRICS.put("requestHandlerAvgIdlePercent", BROKER_REQUEST_HANDLER_AVG_IDLE_PERCENT);
 
         // topic metrics
-        TOPIC_METRICS.add("bytesInPerSec");
-        TOPIC_METRICS.add("bytesOutPerSec");
+        TOPIC_METRICS.put("bytesInPerSec", TOPIC_BYTES_IN);
+        TOPIC_METRICS.put("bytesOutPerSec", TOPIC_BYTES_OUT);
         // FIXME This seems to only be a broker level stat for us
-        TOPIC_METRICS.add("replicationBytesInPerSec");
+        //TOPIC_METRICS.put("replicationBytesInPerSec", TOPIC_REPLICATION_BYTES_IN);
         // FIXME This seems to only be a broker level stat for us
-        TOPIC_METRICS.add("replicationBytesOutPerSec");
-        TOPIC_METRICS.add("totalFetchRequestsPerSec");
-        TOPIC_METRICS.add("totalProduceRequestsPerSec");
-        TOPIC_METRICS.add("messagesInPerSec");
+        //TOPIC_METRICS.put("replicationBytesOutPerSec", TOPIC_REPLICATION_BYTES_OUT);
+        TOPIC_METRICS.put("totalFetchRequestsPerSec", TOPIC_FETCH_REQUEST_RATE);
+        TOPIC_METRICS.put("totalProduceRequestsPerSec", TOPIC_PRODUCE_REQUEST_RATE);
+        TOPIC_METRICS.put("messagesInPerSec", TOPIC_MESSAGES_IN_PER_SEC);
 
         // FIXME Note that the RawMetricType of the following three queries is wrong
         TYPE_TO_QUERY.put(ALL_TOPIC_BYTES_IN,
@@ -177,6 +178,20 @@ public class NewRelicQuerySupplier implements Supplier<Map<RawMetricType, String
         // partition metrics - being handled separately
         // TYPE_TO_QUERY.put(PARTITION_SIZE,
         //        "kafka_log_Log_Value{name=\"Size\",topic!=\"\",partition!=\"\"}");
+
+        // Create immutable sets of our hashmaps
+    }
+
+    public static Map<String, RawMetricType> getAllTopicMap() {
+        return ALL_TOPICS_METRICS;
+    }
+
+    public static Map<String, RawMetricType> getBrokerMap() {
+        return BROKER_METRICS;
+    }
+
+    public static Map<String, RawMetricType> getTopicMap() {
+        return TOPIC_METRICS;
     }
 
     @Override public Map<RawMetricType, String> get() {

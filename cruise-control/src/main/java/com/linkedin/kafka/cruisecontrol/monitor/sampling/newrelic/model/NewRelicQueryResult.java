@@ -6,6 +6,8 @@ package com.linkedin.kafka.cruisecontrol.monitor.sampling.newrelic.model;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.JsonNodeType;
+import com.linkedin.kafka.cruisecontrol.metricsreporter.metric.RawMetricType;
+import com.linkedin.kafka.cruisecontrol.monitor.sampling.newrelic.NewRelicQuerySupplier;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -36,28 +38,25 @@ public class NewRelicQueryResult {
         RESERVED_ATTRS.add(CLUSTER);
     }
 
-    // private final long _beginTimeSeconds;
-    // private final long _endTimeSeconds;
-
     private final List<String> _facets = new ArrayList<>();
 
-    private final Map<String, NewRelicResultValue> _results = new HashMap<>();
+    private final Map<RawMetricType, NewRelicResultValue> _results = new HashMap<>();
 
     public NewRelicQueryResult(JsonNode result) {
-        // _beginTimeSeconds = result.get(BEGIN_TIME_SECONDS_ATTR).asLong();
-        // _endTimeSeconds = result.get(END_TIME_SECONDS_ATTR).asLong();
-
         // If we facet on multiple attributes, facets will be an array
         // and have multiple elements. If we facet on only one element,
         // facet will be a singular element so we handle this case here
+        Map<String, RawMetricType> valueToMetricMap = NewRelicQuerySupplier.getAllTopicMap();
         if (result.has(FACET_ATTR)) {
             JsonNode facets = result.get(FACET_ATTR);
             if (facets.getNodeType() == JsonNodeType.ARRAY) {
                 for (JsonNode facet : facets) {
                     _facets.add(facet.asText());
+                    valueToMetricMap = NewRelicQuerySupplier.getTopicMap();
                 }
             } else {
                 _facets.add(facets.asText());
+                valueToMetricMap = NewRelicQuerySupplier.getBrokerMap();
             }
         }
 
@@ -69,7 +68,9 @@ public class NewRelicQueryResult {
                 continue;
             }
 
-            _results.put(fieldName, new NewRelicResultValue(fieldName, result.get(fieldName).asDouble()));
+            String metricLabel = fieldName.split("\\.")[1];
+
+            _results.put(valueToMetricMap.get(metricLabel), new NewRelicResultValue(fieldName, result.get(fieldName).asDouble()));
         }
     }
 
@@ -78,19 +79,11 @@ public class NewRelicQueryResult {
         return "NewRelic Query Result: " + _results.toString();
     }
 
-    //public long getBeginTimeSeconds() {
-    //    return _beginTimeSeconds;
-    //}
-
-    //public long getEndTimeSeconds() {
-    //    return _endTimeSeconds;
-    //}
-
     public List<String> getFacets() {
         return _facets;
     }
 
-    public Map<String, NewRelicResultValue> getResults() {
+    public Map<RawMetricType, NewRelicResultValue> getResults() {
         return _results;
     }
 }
