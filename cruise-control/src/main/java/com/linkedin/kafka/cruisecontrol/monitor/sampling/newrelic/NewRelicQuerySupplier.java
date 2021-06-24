@@ -163,7 +163,7 @@ public class NewRelicQuerySupplier implements Supplier<Map<RawMetricType.MetricS
     }
 
     public static Map<String, RawMetricType> getPartitionMap() {
-        return TOPIC_METRICS;
+        return PARTITION_METRICS;
     }
 
     @Override public Map<RawMetricType.MetricScope, String> get() {

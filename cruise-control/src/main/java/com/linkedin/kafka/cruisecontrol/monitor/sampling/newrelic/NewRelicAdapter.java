@@ -63,28 +63,31 @@ class NewRelicAdapter {
             if (responseCode != HttpServletResponse.SC_OK) {
                 throw new IOException(String.format("Received non-success response code on New Relic GraphQL API HTTP call "
                         + "(response code = %s, response body = %s)", responseCode, responseBody));
+            } else if (responseBody == null || responseBody.equals("")) {
+                throw new IOException(String.format("Received null responseBody or responseBody was empty."
+                                + " (response code = %s, response body = %s)", responseCode, responseBody));
             }
 
-            JsonNode responseJson = JSON.readTree(responseBody);
-            JsonNode resultsJson = responseJson.get("data").get("actor").get("account").get("nrql").get("results");
+            try {
+                JsonNode responseJson = JSON.readTree(responseBody);
+                JsonNode resultsJson = responseJson.get("data").get("actor").get("account").get("nrql").get("results");
+                List<NewRelicQueryResult> results = new ArrayList<>();
 
-            List<NewRelicQueryResult> results = new ArrayList<>();
-
-            // Can be null upon invalid query or just something else going wrong on server side
-            if (resultsJson == null) {
-                return results;
-            }
-
-            int count = 0;
-            for (JsonNode resultJson : resultsJson) {
-                if (count == 0) {
-                    System.out.printf("ResultJSON: %s%n", resultJson);
+                // Can be null upon invalid query or just something else going wrong on server side
+                if (resultsJson == null) {
+                    throw new IOException(String.format("ResultsJson was empty. "
+                            + "(response body = %s)", responseBody));
                 }
-                count++;
-                results.add(new NewRelicQueryResult(resultJson));
-            }
 
-            return results;
+                for (JsonNode resultJson : resultsJson) {
+                    results.add(new NewRelicQueryResult(resultJson));
+                }
+
+                return results;
+            } catch (NullPointerException e) {
+                throw new IOException(String.format("Response body was of invalid format and could not be"
+                        + "properly parsed. (response body = %s)", responseBody));
+            }
         }
     }
 

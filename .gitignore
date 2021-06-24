@@ -19,5 +19,4 @@ access.log
 /bin/
 
 # Remove these later
-cruise-control/src/test/java/com/linkedin/kafka/cruisecontrol/monitor/sampling/newrelic/
-*/NewRelicAdapterTest.java
+cruise-control/src/test/java/com/linkedin/kafka/cruisecontrol/monitor/sampling/newrelic/NewRelicHardcodeQueryTest.java

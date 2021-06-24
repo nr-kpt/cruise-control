@@ -20,7 +20,12 @@ import org.apache.kafka.common.PartitionInfo;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import java.io.IOException;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Map;
+import java.util.Set;
+import java.util.List;
+import java.util.Collections;
+import java.util.Objects;
 
 public class NewRelicMetricSampler extends AbstractMetricSampler {
     private static final Logger LOGGER = LoggerFactory.getLogger(NewRelicMetricSampler.class);
@@ -45,19 +50,18 @@ public class NewRelicMetricSampler extends AbstractMetricSampler {
         _metricToNewRelicQueryMap = (new NewRelicQuerySupplier()).get();
     }
 
-    private void configureNewRelicAdapter(Map<String,?> configs) {
+    private void configureNewRelicAdapter(Map<String, ?> configs) {
         final String apiKey = (String) configs.get(NEWRELIC_API_CONFIG);
         if (apiKey == null) {
             throw new ConfigException(String.format(
                     "%s config is required to have an API Key", NEWRELIC_API_CONFIG));
         }
-        final int accountId = (int) configs.get(NEWRELIC_ACCOUNT_ID);
+        final int accountId = (Integer) configs.get(NEWRELIC_ACCOUNT_ID);
 
         _httpClient = HttpClients.createDefault();
         _newRelicAdapter = new NewRelicAdapter(_httpClient, NEWRELIC_ENDPOINT, accountId, apiKey);
 
     }
-
 
     // This function will run all our queries using NewRelicAdapter
     @Override
@@ -147,7 +151,7 @@ public class NewRelicMetricSampler extends AbstractMetricSampler {
      * Note that size in this context refers to the number of
      * leaders and replicas of this topic.
      */
-    private class TopicSize implements Comparable<TopicSize> {
+    private static class TopicSize implements Comparable<TopicSize> {
         private String _topic;
         private int _size;
 
@@ -168,46 +172,76 @@ public class NewRelicMetricSampler extends AbstractMetricSampler {
         public int compareTo(TopicSize other) {
             return _size - other.getSize();
         }
-    }
 
-    private class PartitionQueryBin {
-        private int MAX_SIZE = 2000;
-
-        private int current_size;
-        List<TopicSize> topics;
-
-        private PartitionQueryBin() {
-            current_size = 0;
-            topics = new ArrayList<>();
+        @Override
+        public boolean equals(Object other) {
+            if (this == other) {
+                return true;
+            }
+            if (other == null || getClass() != other.getClass()) {
+                return false;
+            }
+            TopicSize topicSizeOther = (TopicSize) other;
+            return compareTo(topicSizeOther) == 0;
         }
 
+        @Override
+        public int hashCode() {
+            return Objects.hash(_topic, _size);
+        }
+    }
+
+    private static class PartitionQueryBin {
+        // NRQL Query output limit
+        private static final int MAX_SIZE = 2000;
+
+        private int _currentSize;
+        List<TopicSize> _topics;
+
+        private PartitionQueryBin() {
+            _currentSize = 0;
+            _topics = new ArrayList<>();
+        }
+
+        /**
+         * Attempts to add a new topic to this partition bin.
+         * If the topic is too large, we won't add it to
+         * this bin.
+         * @param topic - Topic which we are attempting to add
+         * @return - Whether or not we were able to add the topic
+         * to this bin.
+         */
         private boolean addTopic(TopicSize topic) {
-            int topic_size = topic.getSize();
-            if (current_size + topic_size > MAX_SIZE) {
+            int topicSize = topic.getSize();
+            if (_currentSize + topicSize > MAX_SIZE) {
                 return false;
             } else {
-                current_size += topic_size;
-                topics.add(topic);
+                _currentSize += topicSize;
+                _topics.add(topic);
                 return true;
             }
         }
 
+        /**
+         * Given the list of all topics in this bin,
+         * we generate a string of the topics separated by a comma and space
+         * @return - String of topics separated by comma and space w/ no trailing comma or space
+         */
         private String generateTopicStringForQuery() {
             StringBuffer buffer = new StringBuffer();
 
             // We want a comma on all but the last element so we will handle the last one separately
-            for (int i = 0; i < topics.size() - 1; i++) {
-                buffer.append(String.format("'%s', ", topics.get(i).getTopic()));
+            for (int i = 0; i < _topics.size() - 1; i++) {
+                buffer.append(String.format("'%s', ", _topics.get(i).getTopic()));
             }
             // Add in last element without a comma or space
-            buffer.append(String.format("'%s'", topics.get(topics.size() - 1).getTopic()));
+            buffer.append(String.format("'%s'", _topics.get(_topics.size() - 1).getTopic()));
 
             return buffer.toString();
         }
     }
 
     private ArrayList<TopicSize> getSortedTopicByReplicaCount(Cluster cluster) {
-        // Get the number of partitions per topic per broker from cluster
         Set<String> topics = cluster.topics();
 
         // Get the total number of leaders + replicas that are for this topic
@@ -215,14 +249,13 @@ public class NewRelicMetricSampler extends AbstractMetricSampler {
         // since they are on different brokers and will require a different output from NRQL
         ArrayList<TopicSize> topicSizes = new ArrayList<>();
         for (String topic: topics) {
-            int size = 1;
+            int size = 0;
             for (PartitionInfo partitionInfo: cluster.partitionsForTopic(topic)) {
                 size += partitionInfo.replicas().length;
             }
             topicSizes.add(new TopicSize(topic, size));
         }
 
-        // Sort PartitionCounts
         Collections.sort(topicSizes);
 
         return topicSizes;
@@ -232,8 +265,9 @@ public class NewRelicMetricSampler extends AbstractMetricSampler {
      * Using the first fit decreasing algorithm that is used to solve BinPacking
      * problems such as this one. See this link: https://sites.cs.ucsb.edu/~suri/cs130b/BinPacking
      * for more information on this algorithm and also the optimality of the algorithm.
-     * @param topicSizes
-     * @return
+     * @param topicSizes - List of topics paired with their number of leader and replica partitions
+     * @return -> Assigning these topicSizes to different queries all with total leader and replica
+     * counts below the limit requirement for NRQL.
      */
     private List<PartitionQueryBin> assignToBins(List<TopicSize> topicSizes) {
         List<PartitionQueryBin> queryBins = new ArrayList<>();
