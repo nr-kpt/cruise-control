@@ -43,12 +43,24 @@ public class NewRelicQuerySupplier implements Supplier<Map<RawMetricType.MetricS
             + "SINCE 1 minute ago "
             + "LIMIT MAX";
 
-    private static String brokerQuery(String select) {
+    private static final String PARTITION_QUERY = "FROM Metric "
+            + "SELECT max(kafka_log_Log_Value_Size) "
+            + "WHERE entity.name = '%s' "
+            + "AND topic IN (%s) "
+            + "FACET broker, topic, partition "
+            + "SINCE 1 minute ago "
+            + "LIMIT MAX";
+
+    public static String brokerQuery(String select) {
         return String.format(BROKER_QUERY, select, CLUSTER_NAME);
     }
 
-    private static String topicQuery(String select) {
+    public static String topicQuery(String select) {
         return String.format(TOPIC_QUERY, select, CLUSTER_NAME);
+    }
+
+    public static String partitionQuery(String topics) {
+        return String.format(PARTITION_QUERY, CLUSTER_NAME, topics);
     }
 
     private static String generateFeatures(Map<String, RawMetricType> metrics) {
@@ -135,8 +147,7 @@ public class NewRelicQuerySupplier implements Supplier<Map<RawMetricType.MetricS
         TOPIC_METRICS.put("messagesInPerSec", TOPIC_MESSAGES_IN_PER_SEC);
 
         // partition level metrics
-        // FIXME -> update with the actual string that will be output by the query
-        PARTITION_METRICS.put("", PARTITION_SIZE);
+        PARTITION_METRICS.put("kafka_log_Log_Value_Size", PARTITION_SIZE);
 
         // Create the actual queries we want to run and save them
         TYPE_TO_QUERY.put(BROKER, brokerQuery(generateFeatures(BROKER_METRICS)));

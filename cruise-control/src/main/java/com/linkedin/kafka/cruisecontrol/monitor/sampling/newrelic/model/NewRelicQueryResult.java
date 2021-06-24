@@ -8,6 +8,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.JsonNodeType;
 import com.linkedin.kafka.cruisecontrol.metricsreporter.metric.RawMetricType;
 import com.linkedin.kafka.cruisecontrol.monitor.sampling.newrelic.NewRelicQuerySupplier;
+import java.time.Instant;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
@@ -22,6 +23,7 @@ public class NewRelicQueryResult {
     public static final String CLUSTER = "cluster";
     public static final String BROKER = "broker";
     public static final String TOPIC = "topic";
+    public static final String PARTITION = "partition";
 
     private static final Set<String> RESERVED_ATTRS = new HashSet<>();
     static {
@@ -30,6 +32,7 @@ public class NewRelicQueryResult {
         RESERVED_ATTRS.add(FACET_ATTR);
         RESERVED_ATTRS.add(BROKER);
         RESERVED_ATTRS.add(TOPIC);
+        RESERVED_ATTRS.add(PARTITION);
 
         // Note that we don't need to collect this since Cruise Control
         // only looks at data from one cluster
@@ -38,12 +41,12 @@ public class NewRelicQueryResult {
     private final int _brokerID;
     private final String _topic;
     private final int _partition;
-    private final long _time;
+    private final long _epochTimeMilli;
 
     private final Map<RawMetricType, Double> _results = new HashMap<>();
 
     public NewRelicQueryResult(JsonNode result) {
-        _time = result.get(END_TIME_SECONDS_ATTR).asLong();
+        _epochTimeMilli = Instant.now().toEpochMilli();
 
         // If facet is one item, this is a broker level query: facets = broker
         // If length of facets is 2, this is a topic level query: facets = [broker, topic]
@@ -87,8 +90,8 @@ public class NewRelicQueryResult {
         return _topic;
     }
 
-    public long getTime() {
-        return _time;
+    public long getTimeMs() {
+        return _epochTimeMilli;
     }
 
     public int getPartition() {
