@@ -16,6 +16,7 @@ import com.linkedin.kafka.cruisecontrol.monitor.sampling.newrelic.model.NewRelic
 import org.apache.http.impl.client.CloseableHttpClient;
 import org.apache.http.impl.client.HttpClients;
 import org.apache.kafka.common.Cluster;
+import org.apache.kafka.common.Node;
 import org.apache.kafka.common.PartitionInfo;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -26,6 +27,8 @@ import java.util.Set;
 import java.util.List;
 import java.util.Collections;
 import java.util.Objects;
+import java.util.HashMap;
+
 
 public class NewRelicMetricSampler extends AbstractMetricSampler {
     private static final Logger LOGGER = LoggerFactory.getLogger(NewRelicMetricSampler.class);
@@ -154,10 +157,20 @@ public class NewRelicMetricSampler extends AbstractMetricSampler {
     private static class TopicSize implements Comparable<TopicSize> {
         private String _topic;
         private int _size;
+        private int _brokerId;
+        private boolean _isBrokerTopic;
 
         private TopicSize(String topic, int size) {
             _topic = topic;
             _size = size;
+            _isBrokerTopic = false;
+        }
+
+        private TopicSize(String topic, int size, int brokerId) {
+            _topic = topic;
+            _size = size;
+            _brokerId = brokerId;
+            _isBrokerTopic = true;
         }
 
         private String getTopic() {
@@ -166,6 +179,14 @@ public class NewRelicMetricSampler extends AbstractMetricSampler {
 
         private int getSize() {
             return _size;
+        }
+
+        private int getBrokerId() {
+            return _brokerId;
+        }
+
+        private boolean getIsBrokerTopic() {
+            return _isBrokerTopic;
         }
 
         @Override
@@ -182,7 +203,9 @@ public class NewRelicMetricSampler extends AbstractMetricSampler {
                 return false;
             }
             TopicSize topicSizeOther = (TopicSize) other;
-            return compareTo(topicSizeOther) == 0;
+            return compareTo(topicSizeOther) == 0
+                    && _topic.equals(topicSizeOther._topic)
+                    && _brokerId == topicSizeOther.getBrokerId();
         }
 
         @Override
@@ -197,10 +220,12 @@ public class NewRelicMetricSampler extends AbstractMetricSampler {
 
         private int _currentSize;
         List<TopicSize> _topics;
+        List<TopicSize> _brokerTopics;
 
         private PartitionQueryBin() {
             _currentSize = 0;
             _topics = new ArrayList<>();
+            _brokerTopics = new ArrayList<>();
         }
 
         /**
@@ -217,7 +242,11 @@ public class NewRelicMetricSampler extends AbstractMetricSampler {
                 return false;
             } else {
                 _currentSize += topicSize;
-                _topics.add(topic);
+                if (topic.getIsBrokerTopic()) {
+                    _brokerTopics.add(topic);
+                } else {
+                    _topics.add(topic);
+                }
                 return true;
             }
         }
@@ -228,16 +257,25 @@ public class NewRelicMetricSampler extends AbstractMetricSampler {
          * @return - String of topics separated by comma and space w/ no trailing comma or space
          */
         private String generateTopicStringForQuery() {
-            StringBuffer buffer = new StringBuffer();
-
             // We want a comma on all but the last element so we will handle the last one separately
+            // We want these topics to be in the format:
+            // "('topic1', 'topic2', ...)"
+            StringBuffer topicBuffer = new StringBuffer();
             for (int i = 0; i < _topics.size() - 1; i++) {
-                buffer.append(String.format("'%s', ", _topics.get(i).getTopic()));
+                topicBuffer.append(String.format("'%s', ", _topics.get(i).getTopic()));
             }
             // Add in last element without a comma or space
-            buffer.append(String.format("'%s'", _topics.get(_topics.size() - 1).getTopic()));
+            topicBuffer.append(String.format("'%s'", _topics.get(_topics.size() - 1).getTopic()));
 
-            return buffer.toString();
+            // We want to combine broker topics into the format
+            // "OR (topic = 'topic1' AND broker = brokerId1) OR (topic = 'topic2' AND broker = brokerId2) ..."
+            StringBuffer topicBrokerBuffer = new StringBuffer();
+            for (int i = 0; i < _brokerTopics.size(); i++) {
+                topicBrokerBuffer.append(String.format("OR (topic = '%s' AND broker = %s) ",
+                        _brokerTopics.get(i).getTopic(), _brokerTopics.get(i).getBrokerId()));
+            }
+
+            return topicBuffer + topicBrokerBuffer.toString();
         }
     }
 
@@ -253,7 +291,27 @@ public class NewRelicMetricSampler extends AbstractMetricSampler {
             for (PartitionInfo partitionInfo: cluster.partitionsForTopic(topic)) {
                 size += partitionInfo.replicas().length;
             }
-            topicSizes.add(new TopicSize(topic, size));
+
+            // If topic has more than 2000 replicas, go through each broker and get
+            // the count of replicas in that broker for this topic and create
+            // a new topicSize for each broker, topic combination
+            if (size > 2000) {
+                HashMap<Integer, Integer> brokerToCount = new HashMap<>();
+                for (PartitionInfo partitionInfo: cluster.partitionsForTopic(topic)) {
+                    for (Node broker: partitionInfo.replicas()) {
+                        int brokerTotal = 1;
+                        if (brokerToCount.containsKey(broker.id())) {
+                            brokerTotal += brokerToCount.get(broker.id());
+                        }
+                        brokerToCount.put(broker.id(), brokerTotal);
+                    }
+                }
+                for (Map.Entry<Integer, Integer> entry: brokerToCount.entrySet()) {
+                    topicSizes.add(new TopicSize(topic, entry.getValue(), entry.getKey()));
+                }
+            } else {
+                topicSizes.add(new TopicSize(topic, size));
+            }
         }
 
         Collections.sort(topicSizes);
@@ -287,12 +345,6 @@ public class NewRelicMetricSampler extends AbstractMetricSampler {
             // create a new bin and add the topic to that bin
             if (!added) {
                 PartitionQueryBin newBin = new PartitionQueryBin();
-                if (!newBin.addTopic(topicSize)) {
-                    // FIXME -> Later: call some function to handle topics
-                    //  with more than 2000 partitionCount * replication_factor
-                    LOGGER.info("Topic {} is too large. It has {} leaders + replicas.",
-                            topicSize.getTopic(), topicSize.getSize());
-                }
                 queryBins.add(newBin);
             }
         }
