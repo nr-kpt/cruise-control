@@ -34,39 +34,60 @@ public class NewRelicMetricSampler extends AbstractMetricSampler {
     private static final Logger LOGGER = LoggerFactory.getLogger(NewRelicMetricSampler.class);
 
     // Config name visible to tests
-    static final String NEWRELIC_ENDPOINT = "https://staging-api.newrelic.com";
-    static final String NEWRELIC_API_CONFIG = "newrelic.api.key";
-    static final String NEWRELIC_ACCOUNT_ID = "newrelic.account.id";
+    static final String NEWRELIC_ENDPOINT_CONFIG = "newrelic.endpoint";
+    static final String NEWRELIC_API_KEY_CONFIG = "newrelic.api.key";
+    static final String NEWRELIC_ACCOUNT_ID_CONFIG = "newrelic.account.id";
+    static final String NEWRELIC_QUERY_LIMIT_CONFIG = "newrelic.query.limit";
 
     protected NewRelicAdapter _newRelicAdapter;
     protected Map<RawMetricType.MetricScope, String> _metricToNewRelicQueryMap;
     private CloseableHttpClient _httpClient;
 
+    // NRQL Query limit
+    private static int MAX_SIZE;
+
     @Override
     public void configure(Map<String, ?> configs) {
         super.configure(configs);
         configureNewRelicAdapter(configs);
-        configureQueryMap();
+        configureQueries(configs);
     }
 
-    private void configureQueryMap() {
+    private void configureQueries(Map<String, ?> configs) {
         _metricToNewRelicQueryMap = (new NewRelicQuerySupplier()).get();
+        if (!configs.containsKey(NEWRELIC_QUERY_LIMIT_CONFIG)) {
+            throw new ConfigException(String.format(
+                    "%s config is required to have a query limit", NEWRELIC_QUERY_LIMIT_CONFIG));
+        }
+        MAX_SIZE = (Integer) configs.get(NEWRELIC_QUERY_LIMIT_CONFIG);
     }
 
     private void configureNewRelicAdapter(Map<String, ?> configs) {
-        final String apiKey = (String) configs.get(NEWRELIC_API_CONFIG);
+        final String endpoint = (String) configs.get(NEWRELIC_ENDPOINT_CONFIG);
+        if (endpoint == null) {
+            throw new ConfigException(String.format(
+                    "%s config is required to have an endpoint", NEWRELIC_API_KEY_CONFIG));
+        }
+
+        final String apiKey = (String) configs.get(NEWRELIC_API_KEY_CONFIG);
         if (apiKey == null) {
             throw new ConfigException(String.format(
-                    "%s config is required to have an API Key", NEWRELIC_API_CONFIG));
+                    "%s config is required to have an API Key", NEWRELIC_API_KEY_CONFIG));
         }
-        final int accountId = (Integer) configs.get(NEWRELIC_ACCOUNT_ID);
+        if (!configs.containsKey(NEWRELIC_ACCOUNT_ID_CONFIG)) {
+            throw new ConfigException(String.format(
+                    "%s config is required to have an account ID", NEWRELIC_ACCOUNT_ID_CONFIG));
+        }
+        final int accountId = (Integer) configs.get(NEWRELIC_ACCOUNT_ID_CONFIG);
 
         _httpClient = HttpClients.createDefault();
-        _newRelicAdapter = new NewRelicAdapter(_httpClient, NEWRELIC_ENDPOINT, accountId, apiKey);
+        _newRelicAdapter = new NewRelicAdapter(_httpClient, endpoint, accountId, apiKey);
 
     }
 
     // This function will run all our queries using NewRelicAdapter
+    // Note that under the current implementation of this class, we assume that no topic will have
+    // more than MAX_SIZE number of replicas in any one broker
     @Override
     protected int retrieveMetricsForProcessing(MetricSamplerOptions metricSamplerOptions) throws SamplingException {
         int metricsAdded = 0;
@@ -215,9 +236,6 @@ public class NewRelicMetricSampler extends AbstractMetricSampler {
     }
 
     private static class PartitionQueryBin {
-        // NRQL Query output limit
-        private static final int MAX_SIZE = 2000;
-
         private int _currentSize;
         List<TopicSize> _topics;
         List<TopicSize> _brokerTopics;
@@ -297,17 +315,18 @@ public class NewRelicMetricSampler extends AbstractMetricSampler {
             // a new topicSize for each broker, topic combination
             if (size > 2000) {
                 HashMap<Integer, Integer> brokerToCount = new HashMap<>();
+                for (Node node: cluster.nodes()) {
+                    brokerToCount.put(node.id(), 0);
+                }
                 for (PartitionInfo partitionInfo: cluster.partitionsForTopic(topic)) {
                     for (Node broker: partitionInfo.replicas()) {
-                        int brokerTotal = 1;
-                        if (brokerToCount.containsKey(broker.id())) {
-                            brokerTotal += brokerToCount.get(broker.id());
-                        }
-                        brokerToCount.put(broker.id(), brokerTotal);
+                        brokerToCount.put(broker.id(), 1 + brokerToCount.get(broker.id()));
                     }
                 }
                 for (Map.Entry<Integer, Integer> entry: brokerToCount.entrySet()) {
-                    topicSizes.add(new TopicSize(topic, entry.getValue(), entry.getKey()));
+                    if (entry.getValue() != 0) {
+                        topicSizes.add(new TopicSize(topic, entry.getValue(), entry.getKey()));
+                    }
                 }
             } else {
                 topicSizes.add(new TopicSize(topic, size));

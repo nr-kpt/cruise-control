@@ -138,9 +138,8 @@ public class NewRelicQuerySupplier implements Supplier<Map<RawMetricType.MetricS
         // topic level metrics
         TOPIC_METRICS.put("bytesInPerSec", TOPIC_BYTES_IN);
         TOPIC_METRICS.put("bytesOutPerSec", TOPIC_BYTES_OUT);
-        // FIXME This seems to only be a broker level stat for us
+        // We don't collect the following data on a topic level so I'm not including them
         //TOPIC_METRICS.put("replicationBytesInPerSec", TOPIC_REPLICATION_BYTES_IN);
-        // FIXME This seems to only be a broker level stat for us
         //TOPIC_METRICS.put("replicationBytesOutPerSec", TOPIC_REPLICATION_BYTES_OUT);
         TOPIC_METRICS.put("totalFetchRequestsPerSec", TOPIC_FETCH_REQUEST_RATE);
         TOPIC_METRICS.put("totalProduceRequestsPerSec", TOPIC_PRODUCE_REQUEST_RATE);
