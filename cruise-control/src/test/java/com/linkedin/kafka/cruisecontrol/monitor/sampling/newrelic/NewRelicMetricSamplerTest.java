@@ -11,6 +11,7 @@ import com.linkedin.kafka.cruisecontrol.metricsreporter.metric.RawMetricType;
 import com.linkedin.kafka.cruisecontrol.monitor.metricdefinition.KafkaMetricDef;
 import com.linkedin.kafka.cruisecontrol.monitor.sampling.MetricSampler;
 import com.linkedin.kafka.cruisecontrol.monitor.sampling.MetricSamplerOptions;
+import com.linkedin.kafka.cruisecontrol.monitor.sampling.newrelic.model.NewRelicQueryResult;
 import org.apache.kafka.common.Cluster;
 import org.apache.kafka.common.Node;
 import org.apache.kafka.common.PartitionInfo;
@@ -24,6 +25,7 @@ import java.io.OutputStreamWriter;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Collections;
 import java.util.Set;
@@ -31,8 +33,11 @@ import java.util.HashSet;
 import java.util.Arrays;
 import java.util.concurrent.TimeUnit;
 
+import static com.linkedin.kafka.cruisecontrol.metricsreporter.metric.RawMetricType.MetricScope.BROKER;
+import static com.linkedin.kafka.cruisecontrol.metricsreporter.metric.RawMetricType.MetricScope.TOPIC;
 import static com.linkedin.kafka.cruisecontrol.monitor.sampling.newrelic.NewRelicMetricSampler.*;
-import static org.easymock.EasyMock.mock;
+import static org.easymock.EasyMock.*;
+import static org.junit.Assert.assertEquals;
 
 /**
  * Unit tests for NewRelicMetricSampler.
@@ -49,8 +54,9 @@ public class NewRelicMetricSamplerTest {
     private static final int TOTAL_BROKERS = 3;
     private static final int TOTAL_PARTITIONS = 3;
 
-    private static final String TEST_TOPIC = "test-topic";
-    private static final String TEST_TOPIC_WITH_DOT = "test.topic";
+    private static final String TEST_TOPIC1 = "test-topic1";
+    private static final String TEST_TOPIC2 = "test-topic2";
+    private static final String TEST_TOPIC3 = "test-topic3";
 
     private NewRelicMetricSampler _newRelicMetricSampler;
     private NewRelicAdapter _newRelicAdapter;
@@ -70,8 +76,8 @@ public class NewRelicMetricSamplerTest {
     public void testNoEndpointProvided() throws Exception {
         Map<String, Object> config = new HashMap<>();
         addCapacityConfig(config);
-        config.put(NEWRELIC_ENDPOINT_CONFIG, "https://staging-api.newrelic.com");
-        config.put(NEWRELIC_ACCOUNT_ID_CONFIG, 2);
+        config.put(NEWRELIC_API_KEY_CONFIG, "ABC");
+        config.put(NEWRELIC_ACCOUNT_ID_CONFIG, 1);
         config.put(NEWRELIC_QUERY_LIMIT_CONFIG, 10);
         _newRelicMetricSampler.configure(config);
     }
@@ -81,7 +87,7 @@ public class NewRelicMetricSamplerTest {
         Map<String, Object> config = new HashMap<>();
         addCapacityConfig(config);
         config.put(NEWRELIC_ENDPOINT_CONFIG, "https://staging-api.newrelic.com");
-        config.put(NEWRELIC_ACCOUNT_ID_CONFIG, 2);
+        config.put(NEWRELIC_ACCOUNT_ID_CONFIG, 1);
         config.put(NEWRELIC_QUERY_LIMIT_CONFIG, 10);
         _newRelicMetricSampler.configure(config);
     }
@@ -102,21 +108,53 @@ public class NewRelicMetricSamplerTest {
         addCapacityConfig(config);
         config.put(NEWRELIC_ENDPOINT_CONFIG, "https://staging-api.newrelic.com");
         config.put(NEWRELIC_API_KEY_CONFIG, "ABC");
-        config.put(NEWRELIC_ACCOUNT_ID_CONFIG, 2);
+        config.put(NEWRELIC_ACCOUNT_ID_CONFIG, 1);
         _newRelicMetricSampler.configure(config);
     }
 
     @Test
-    public void testGetSamplesSuccess() {
+    public void testGetSamplesSuccess() throws Exception {
+        Map<String, Object> config = new HashMap<>();
+        setConfigs(config, 14);
+        addCapacityConfig(config);
 
+        ArrayList<String> topics = new ArrayList<>();
+        topics.add(TEST_TOPIC1);
+        topics.add(TEST_TOPIC2);
+
+        ArrayList<Integer> partitions = new ArrayList<>();
+        partitions.add(3);
+        partitions.add(5);
+
+        setUp();
+        MetricSamplerOptions metricSamplerOptions = buildMetricSamplerOptions(topics, partitions);
+        _newRelicMetricSampler.configure(config);
+        _newRelicMetricSampler._newRelicAdapter = _newRelicAdapter;
+
+        setupNewRelicAdapterMock(buildBrokerResults(),
+                buildTopicResults(topics), buildPartitionResults(topics, partitions));
+
+        replay(_newRelicAdapter);
+        //MetricSampler.Samples samples = _newRelicMetricSampler.getSamples(metricSamplerOptions);
+        _newRelicMetricSampler.getSamples(metricSamplerOptions);
+
+        //assertSamplesValid(samples, topics);
+        verify(_newRelicAdapter);
+    }
+
+    private void assertSamplesValid(MetricSampler.Samples samples, ArrayList<String> topics) {
+        assertEquals(TOTAL_BROKERS, samples.brokerMetricSamples().size());
+        assertEquals(topics.size(), 2);
     }
 
     @Test
-    public void testPartitionQueriesWithRandomInputs() {
-
+    public void testPartitionQueriesWithRandomInputs() throws Exception {
+        Map<String, Object> config = new HashMap<>();
+        setConfigs(config);
+        addCapacityConfig(config);
     }
 
-    private static MetricSamplerOptions buildMetricSamplerOptions(ArrayList<String> topics, int partitions) {
+    private static MetricSamplerOptions buildMetricSamplerOptions(ArrayList<String> topics, ArrayList<Integer> partitions) {
 
         return new MetricSamplerOptions(
                 generateCluster(topics, partitions),
@@ -129,20 +167,56 @@ public class NewRelicMetricSamplerTest {
         );
     }
 
-    private static MetricSamplerOptions buildRandomMetricSamplerOptions(ArrayList<String> topics, int maxPartitions) {
-        ArrayList<Integer> partitions = new ArrayList<>();
-        for (int i = 0; i < topics.size(); i++) {
-            partitions.add((int)(Math.random() * maxPartitions) + 3);
+    private void setConfigs(Map<String, Object> config) {
+        config.put(NEWRELIC_ENDPOINT_CONFIG, "https://staging-api.newrelic.com");
+        config.put(NEWRELIC_API_KEY_CONFIG, "ABC");
+        config.put(NEWRELIC_ACCOUNT_ID_CONFIG, 1);
+        config.put(NEWRELIC_QUERY_LIMIT_CONFIG, 10);
+    }
+
+    private void setConfigs(Map<String, Object> config, int queryLimit) {
+        config.put(NEWRELIC_ENDPOINT_CONFIG, "https://staging-api.newrelic.com");
+        config.put(NEWRELIC_API_KEY_CONFIG, "ABC");
+        config.put(NEWRELIC_ACCOUNT_ID_CONFIG, 1);
+        config.put(NEWRELIC_QUERY_LIMIT_CONFIG, queryLimit);
+    }
+
+    private void setupNewRelicAdapterMock(List<NewRelicQueryResult> brokerResults,
+                                          List<NewRelicQueryResult> topicResults,
+                                          List<NewRelicQueryResult> partitionResults) throws IOException {
+            expect(_newRelicAdapter.runQuery(eq(new NewRelicQuerySupplier().get().get(BROKER))))
+                    .andReturn(brokerResults);
+            expect(_newRelicAdapter.runQuery(eq(new NewRelicQuerySupplier().get().get(TOPIC))))
+                    .andReturn(topicResults);
+            expect(_newRelicAdapter.runQuery(contains("FROM Metric")))
+                    .andReturn(partitionResults).anyTimes();
+    }
+
+    private static List<NewRelicQueryResult> buildBrokerResults() {
+        List<NewRelicQueryResult> resultList = new ArrayList<>();
+        for (int brokerId = 0; brokerId < TOTAL_BROKERS; brokerId++) {
+            Map<RawMetricType, Double> results = new HashMap<>();
+            // FIXME -> put values into results
+            resultList.add(new NewRelicQueryResult(brokerId, results));
         }
-        return new MetricSamplerOptions(
-                generateCluster(topics, partitions),
-                generatePartitions(topics, partitions),
-                START_TIME_MS,
-                END_TIME_MS,
-                MetricSampler.SamplingMode.ALL,
-                KafkaMetricDef.commonMetricDef(),
-                60000
-        );
+        return resultList;
+    }
+
+    private static List<NewRelicQueryResult> buildTopicResults(ArrayList<String> topics) {
+        List<NewRelicQueryResult> resultList = new ArrayList<>();
+        for (int brokerId = 0; brokerId < TOTAL_BROKERS; brokerId++) {
+            // FIXME
+        }
+        return resultList;
+    }
+
+    private static List<NewRelicQueryResult> buildPartitionResults(ArrayList<String> topics,
+                                                                   ArrayList<Integer> partitions) {
+        List<NewRelicQueryResult> resultList = new ArrayList<>();
+        for (int brokerId = 0; brokerId < TOTAL_BROKERS; brokerId++) {
+            // FIXME
+        }
+        return resultList;
     }
 
     private void addCapacityConfig(Map<String, Object> config) throws IOException {
@@ -170,18 +244,6 @@ public class NewRelicMetricSamplerTest {
         brokerCapacityConfigResolver.configure(config);
     }
 
-    private static Set<TopicPartition> generatePartitions(ArrayList<String> topics, int partitions) {
-        Set<TopicPartition> set = new HashSet<>();
-        // For each topic add the same number of partitions
-        for (String topic: topics) {
-            for (int partition = 0; partition < partitions; partition++) {
-                TopicPartition topicPartition = new TopicPartition(topic, partition);
-                set.add(topicPartition);
-            }
-        }
-        return set;
-    }
-
     private static Set<TopicPartition> generatePartitions(ArrayList<String> topics, ArrayList<Integer> partitions) {
         Set<TopicPartition> set = new HashSet<>();
         // For each topic add the same number of partitions
@@ -194,22 +256,6 @@ public class NewRelicMetricSamplerTest {
         return set;
     }
 
-    private static Cluster generateCluster(ArrayList<String> topics, int partitions) {
-        Node[] allNodes = new Node[TOTAL_BROKERS];
-        Set<PartitionInfo> partitionInfo = new HashSet<>(TOTAL_BROKERS);
-        for (int brokerId = 0; brokerId < TOTAL_BROKERS; brokerId++) {
-            allNodes[brokerId] = new Node(brokerId, "broker-" + brokerId + ".test-cluster.org", 9092);
-        }
-        for (String topic: topics) {
-            for (int partitionId = 0; partitionId < partitions; partitionId++) {
-                partitionInfo.add(new PartitionInfo(topic, partitionId, allNodes[partitionId], allNodes, allNodes));
-            }
-        }
-        return new Cluster("cluster_id", Arrays.asList(allNodes),
-                partitionInfo, Collections.emptySet(), Collections.emptySet());
-    }
-
-
     private static Cluster generateCluster(ArrayList<String> topics, ArrayList<Integer> partitions) {
         Node[] allNodes = new Node[TOTAL_BROKERS];
         Set<PartitionInfo> partitionInfo = new HashSet<>(TOTAL_BROKERS);
@@ -218,20 +264,11 @@ public class NewRelicMetricSamplerTest {
         }
         for (int i = 0; i < topics.size(); i++) {
             for (int partitionId = 0; partitionId < partitions.get(i); partitionId++) {
-                partitionInfo.add(new PartitionInfo(topics.get(i), partitionId, allNodes[partitionId], allNodes, allNodes));
+                partitionInfo.add(new PartitionInfo(topics.get(i), partitionId,
+                        allNodes[partitionId % TOTAL_BROKERS], allNodes, allNodes));
             }
         }
         return new Cluster("cluster_id", Arrays.asList(allNodes),
                 partitionInfo, Collections.emptySet(), Collections.emptySet());
-    }
-
-    public static class TestQuerySupplier extends NewRelicQuerySupplier {
-        public static final String TEST_QUERY = "test_query";
-
-        @Override public Map<RawMetricType.MetricScope, String> get() {
-            Map<RawMetricType.MetricScope, String> queryMap = new HashMap<>();
-            queryMap.put(RawMetricType.MetricScope.BROKER, TEST_QUERY);
-            return queryMap;
-        }
     }
 }

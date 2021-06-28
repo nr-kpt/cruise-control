@@ -82,6 +82,31 @@ public class NewRelicQueryResult {
         }
     }
 
+    // Used the following for testing
+    public NewRelicQueryResult(int brokerID, Map<RawMetricType, Double> results) {
+        _brokerID = brokerID;
+        _topic = null;
+        _partition = -1;
+        _epochTimeMilli = Instant.now().toEpochMilli();
+        _results.putAll(results);
+    }
+
+    public NewRelicQueryResult(int brokerID, String topic, Map<RawMetricType, Double> results) {
+        _brokerID = brokerID;
+        _topic = topic;
+        _partition = -1;
+        _epochTimeMilli = Instant.now().toEpochMilli();
+        _results.putAll(results);
+    }
+
+    public NewRelicQueryResult(int brokerID, String topic, int partition, Map<RawMetricType, Double> results) {
+        _brokerID = brokerID;
+        _topic = topic;
+        _partition = partition;
+        _epochTimeMilli = Instant.now().toEpochMilli();
+        _results.putAll(results);
+    }
+
     public int getBrokerID() {
         return _brokerID;
     }

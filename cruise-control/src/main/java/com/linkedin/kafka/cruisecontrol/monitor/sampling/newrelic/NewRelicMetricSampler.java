@@ -39,6 +39,7 @@ public class NewRelicMetricSampler extends AbstractMetricSampler {
     static final String NEWRELIC_ACCOUNT_ID_CONFIG = "newrelic.account.id";
     static final String NEWRELIC_QUERY_LIMIT_CONFIG = "newrelic.query.limit";
 
+    // We make this protected so we can set it during the tests
     protected NewRelicAdapter _newRelicAdapter;
     protected Map<RawMetricType.MetricScope, String> _metricToNewRelicQueryMap;
     private CloseableHttpClient _httpClient;
@@ -147,6 +148,7 @@ public class NewRelicMetricSampler extends AbstractMetricSampler {
             final List<NewRelicQueryResult> queryResults;
 
             try {
+                System.out.printf("Partition Query: %s%n", query);
                 queryResults = _newRelicAdapter.runQuery(query);
             } catch (IOException e) {
                 LOGGER.error("Error when attempting to query NRQL for metrics.", e);
@@ -277,20 +279,33 @@ public class NewRelicMetricSampler extends AbstractMetricSampler {
         private String generateTopicStringForQuery() {
             // We want a comma on all but the last element so we will handle the last one separately
             // We want these topics to be in the format:
-            // "('topic1', 'topic2', ...)"
+            // "topic IN ('topic1', 'topic2', ...)"
             StringBuffer topicBuffer = new StringBuffer();
-            for (int i = 0; i < _topics.size() - 1; i++) {
-                topicBuffer.append(String.format("'%s', ", _topics.get(i).getTopic()));
+            if (_topics.size() > 0) {
+                topicBuffer.append("topic IN (");
+
+                for (int i = 0; i < _topics.size() - 1; i++) {
+                    topicBuffer.append(String.format("'%s', ", _topics.get(i).getTopic()));
+                }
+                // Add in last element without a comma or space
+                topicBuffer.append(String.format("'%s')", _topics.get(_topics.size() - 1).getTopic()));
             }
-            // Add in last element without a comma or space
-            topicBuffer.append(String.format("'%s'", _topics.get(_topics.size() - 1).getTopic()));
 
             // We want to combine broker topics into the format
-            // "OR (topic = 'topic1' AND broker = brokerId1) OR (topic = 'topic2' AND broker = brokerId2) ..."
+            // "(topic = 'topic1' AND broker = brokerId1) OR (topic = 'topic2' AND broker = brokerId2) ..."
             StringBuffer topicBrokerBuffer = new StringBuffer();
-            for (int i = 0; i < _brokerTopics.size(); i++) {
-                topicBrokerBuffer.append(String.format("OR (topic = '%s' AND broker = %s) ",
-                        _brokerTopics.get(i).getTopic(), _brokerTopics.get(i).getBrokerId()));
+            if (_brokerTopics.size() > 0) {
+                if (_topics.size() > 0) {
+                    topicBrokerBuffer.append(" OR ");
+                }
+                for (int i = 0; i < _brokerTopics.size() - 1; i++) {
+                    topicBrokerBuffer.append(String.format("(topic = '%s' AND broker = %s) OR ",
+                            _brokerTopics.get(i).getTopic(), _brokerTopics.get(i).getBrokerId()));
+                }
+                // Add in last element without OR
+                topicBrokerBuffer.append(String.format("(topic = '%s' AND broker = %s)",
+                        _brokerTopics.get(_brokerTopics.size() - 1).getTopic(),
+                        _brokerTopics.get(_brokerTopics.size() - 1).getBrokerId()));
             }
 
             return topicBuffer + topicBrokerBuffer.toString();
@@ -313,7 +328,7 @@ public class NewRelicMetricSampler extends AbstractMetricSampler {
             // If topic has more than 2000 replicas, go through each broker and get
             // the count of replicas in that broker for this topic and create
             // a new topicSize for each broker, topic combination
-            if (size > 2000) {
+            if (size > MAX_SIZE) {
                 HashMap<Integer, Integer> brokerToCount = new HashMap<>();
                 for (Node node: cluster.nodes()) {
                     brokerToCount.put(node.id(), 0);
@@ -364,6 +379,9 @@ public class NewRelicMetricSampler extends AbstractMetricSampler {
             // create a new bin and add the topic to that bin
             if (!added) {
                 PartitionQueryBin newBin = new PartitionQueryBin();
+                if (!newBin.addTopic(topicSize)) {
+                    // FIXME throw an exception here
+                }
                 queryBins.add(newBin);
             }
         }

@@ -46,7 +46,7 @@ public class NewRelicQuerySupplier implements Supplier<Map<RawMetricType.MetricS
     private static final String PARTITION_QUERY = "FROM Metric "
             + "SELECT max(kafka_log_Log_Value_Size) "
             + "WHERE entity.name = '%s' "
-            + "AND topic IN (%s) "
+            + "WHERE %s "
             + "FACET broker, topic, partition "
             + "SINCE 1 minute ago "
             + "LIMIT MAX";
