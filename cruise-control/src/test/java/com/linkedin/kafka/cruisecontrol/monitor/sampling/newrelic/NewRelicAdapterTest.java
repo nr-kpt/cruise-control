@@ -28,7 +28,7 @@ import static org.junit.Assert.assertTrue;
 public class NewRelicAdapterTest extends LocalServerTestBase {
     @Test
     public void testBrokerQuery() throws Exception {
-        String query = NewRelicQuerySupplier.brokerQuery("TEST VALUE");
+        String query = NewRelicQuerySupplier.brokerQuery();
 
         this.serverBootstrap.registerHandler("*", new HttpRequestHandler() {
             @Override public void handle(HttpRequest request, HttpResponse response, HttpContext context) {
@@ -72,7 +72,7 @@ public class NewRelicAdapterTest extends LocalServerTestBase {
 
     @Test
     public void testTopicQuery() throws Exception {
-        String query = NewRelicQuerySupplier.topicQuery("TEST VALUE");
+        String query = NewRelicQuerySupplier.topicQuery("");
 
         this.serverBootstrap.registerHandler("*", new HttpRequestHandler() {
             @Override public void handle(HttpRequest request, HttpResponse response, HttpContext context) {
@@ -156,7 +156,7 @@ public class NewRelicAdapterTest extends LocalServerTestBase {
 
     @Test(expected = IOException.class)
     public void testFailureResponseWith403Code() throws Exception {
-        String query = NewRelicQuerySupplier.brokerQuery("TestTopic");
+        String query = NewRelicQuerySupplier.brokerQuery();
 
         this.serverBootstrap.registerHandler("*", new HttpRequestHandler() {
             @Override public void handle(HttpRequest request, HttpResponse response, HttpContext context) {
@@ -174,7 +174,7 @@ public class NewRelicAdapterTest extends LocalServerTestBase {
 
     @Test(expected = IOException.class)
     public void testEmptyResponse() throws Exception {
-        String query = NewRelicQuerySupplier.brokerQuery("TestTopic");
+        String query = NewRelicQuerySupplier.brokerQuery();
 
         this.serverBootstrap.registerHandler("*", new HttpRequestHandler() {
             @Override public void handle(HttpRequest request, HttpResponse response, HttpContext context) {
@@ -193,7 +193,7 @@ public class NewRelicAdapterTest extends LocalServerTestBase {
 
     @Test(expected = IOException.class)
     public void testInvalidJSONResponse() throws Exception {
-        String query = NewRelicQuerySupplier.brokerQuery("TestTopic");
+        String query = NewRelicQuerySupplier.brokerQuery();
 
         this.serverBootstrap.registerHandler("*", new HttpRequestHandler() {
             @Override public void handle(HttpRequest request, HttpResponse response, HttpContext context) {
@@ -214,7 +214,7 @@ public class NewRelicAdapterTest extends LocalServerTestBase {
     // new metrics are added which will be the case given that the size of results is 0
     @Test
     public void testEmptyResults() throws Exception {
-        String query = NewRelicQuerySupplier.brokerQuery("TestTopic");
+        String query = NewRelicQuerySupplier.brokerQuery();
 
         this.serverBootstrap.registerHandler("*", new HttpRequestHandler() {
             @Override public void handle(HttpRequest request, HttpResponse response, HttpContext context) {

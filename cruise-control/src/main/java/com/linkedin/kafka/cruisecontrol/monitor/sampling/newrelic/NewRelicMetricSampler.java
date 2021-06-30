@@ -22,6 +22,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 import java.util.List;
@@ -41,7 +42,6 @@ public class NewRelicMetricSampler extends AbstractMetricSampler {
 
     // We make this protected so we can set it during the tests
     protected NewRelicAdapter _newRelicAdapter;
-    protected Map<RawMetricType.MetricScope, String> _metricToNewRelicQueryMap;
     private CloseableHttpClient _httpClient;
 
     // NRQL Query limit
@@ -55,7 +55,6 @@ public class NewRelicMetricSampler extends AbstractMetricSampler {
     }
 
     private void configureQueries(Map<String, ?> configs) {
-        _metricToNewRelicQueryMap = (new NewRelicQuerySupplier()).get();
         if (!configs.containsKey(NEWRELIC_QUERY_LIMIT_CONFIG)) {
             throw new ConfigException(String.format(
                     "%s config is required to have a query limit", NEWRELIC_QUERY_LIMIT_CONFIG));
@@ -89,87 +88,195 @@ public class NewRelicMetricSampler extends AbstractMetricSampler {
     // This function will run all our queries using NewRelicAdapter
     // Note that under the current implementation of this class, we assume that no topic will have
     // more than MAX_SIZE number of replicas in any one broker
+    // We also assume no cluster has more than MAX_SIZE brokers
     @Override
     protected int retrieveMetricsForProcessing(MetricSamplerOptions metricSamplerOptions) throws SamplingException {
-        int metricsAdded = 0;
-        int resultsSkipped = 0;
-        for (Map.Entry<RawMetricType.MetricScope, String> metricToQueryEntry : _metricToNewRelicQueryMap.entrySet()) {
-            final RawMetricType.MetricScope scope = metricToQueryEntry.getKey();
-            final String query = metricToQueryEntry.getValue();
-            final List<NewRelicQueryResult> queryResults;
+        // FIXME
+        int[] resultCounts = new int[]{0, 0};
 
+        // Run our broker level queries
+        runBrokerQuery(resultCounts);
+
+        // Run topic level queries
+        runTopicQueries(metricSamplerOptions.cluster(), resultCounts);
+
+        // Run partition level queries
+        runPartitionQueries(metricSamplerOptions.cluster(), resultCounts);
+
+        LOGGER.info("Added {} metric values. Skipped {} invalid query results.", resultCounts[0], resultCounts[1]);
+        return resultCounts[0];
+    }
+
+    private void runBrokerQuery(int[] resultCounts) throws SamplingException {
+        // Run our broker query first
+        final String brokerQuery = NewRelicQuerySupplier.brokerQuery();
+        final List<NewRelicQueryResult> brokerResults;
+
+        try {
+            brokerResults = _newRelicAdapter.runQuery(brokerQuery);
+        } catch (IOException e) {
+            LOGGER.error("Error when attempting to query NRQL for metrics.", e);
+            //throw new SamplingException("Could not query metrics from NRQL.");
+            return;
+        }
+
+        for (NewRelicQueryResult result : brokerResults) {
             try {
-                queryResults = _newRelicAdapter.runQuery(query);
-            } catch (IOException e) {
-                LOGGER.error("Error when attempting to query NRQL for metrics.", e);
-                throw new SamplingException("Could not query metrics from NRQL.");
-            }
-
-            for (NewRelicQueryResult result : queryResults) {
-                try {
-                    switch (scope) {
-                        case BROKER:
-                            metricsAdded += addBrokerMetrics(result);
-                            break;
-                        case TOPIC:
-                            metricsAdded += addTopicMetrics(result);
-                            break;
-
-                        // We are handling partition level case separately since NRQL has 2000 item limit and
-                        // some partition level queries may have more than 2000 items
-                        case PARTITION:
-                        default:
-                            // Not supported.
-                            break;
-                    }
-                } catch (InvalidNewRelicResultException e) {
-                    // Unlike PrometheusMetricSampler, this form of exception is probably very unlikely since
-                    // we will be getting cleaned up and well formed data directly from NRDB, but just keeping
-                    // this check here anyway to be safe
-                    LOGGER.trace("Invalid query result received from New Relic for query {}", query, e);
-                    resultsSkipped++;
-                }
+                resultCounts[0] += addBrokerMetrics(result);
+            } catch (InvalidNewRelicResultException e) {
+                // Unlike PrometheusMetricSampler, this form of exception is probably very unlikely since
+                // we will be getting cleaned up and well formed data directly from NRDB, but just keeping
+                // this check here anyway to be safe
+                LOGGER.trace("Invalid query result received from New Relic for query {}", brokerQuery, e);
+                resultCounts[1]++;
             }
         }
-        // Handling partition level case separately by going through each topic and adding partition size metrics
-        // just for that topic
+    }
 
+    private void runTopicQueries(Cluster cluster, int[] resultCounts) {
+        // Get the sorted list of brokers by their topic counts
+        List<KafkaSize> brokerSizes = getSortedBrokersByTopicCount(cluster);
+
+        List<NewRelicQueryBin> brokerQueryBins;
+        try {
+            brokerQueryBins = assignToBins(brokerSizes, BrokerQueryBin.class);
+
+            // Generate the queries based on the bins that PartitionCounts were assigned to
+            List<String> topicQueries = getTopicQueries(brokerQueryBins);
+
+            // Run the partition queries
+            for (String query: topicQueries) {
+                final List<NewRelicQueryResult> queryResults;
+
+                try {
+                    System.out.printf("Topic Query: %s%n", query);
+                    queryResults = _newRelicAdapter.runQuery(query);
+                } catch (IOException e) {
+                    LOGGER.error("Error when attempting to query NRQL for metrics.", e);
+                    //throw new SamplingException("Could not query metrics from NRQL.");
+                    continue;
+                }
+
+                for (NewRelicQueryResult result : queryResults) {
+                    try {
+                        resultCounts[0] += addTopicMetrics(result);
+                    } catch (InvalidNewRelicResultException e) {
+                        // Unlike PrometheusMetricSampler, this form of exception is probably very unlikely since
+                        // we will be getting cleaned up and well formed data directly from NRDB, but just keeping
+                        // this check here anyway to be safe
+                        LOGGER.trace("Invalid query result received from New Relic for topic query {}", query, e);
+                        resultCounts[1]++;
+                    }
+                }
+            }
+
+        } catch (Exception e) {
+            LOGGER.error("Error when converting topics to bins.", e);
+        }
+    }
+
+    // Remaining tasks -> use futures in queries +
+
+    private void runPartitionQueries(Cluster cluster, int[] resultCounts) {
         // Get the sorted list of topics by their leader + follower count for each partition
-        List<TopicSize> topicSizes = getSortedTopicByReplicaCount(metricSamplerOptions.cluster());
+        List<KafkaSize> topicSizes = getSortedTopicsByReplicaCount(cluster);
 
         // Use FFD algorithm (more info at method header) to assign topicSizes to queries
-        List<PartitionQueryBin> queryBins = assignToBins(topicSizes);
+        List<NewRelicQueryBin> topicQueryBins;
+        try {
+            topicQueryBins = assignToBins(topicSizes, TopicQueryBin.class);
 
-        // Generate the queries based on the bins that PartitionCounts were assigned to
-        List<String> partitionQueries = getPartitionQueries(queryBins);
+            // Generate the queries based on the bins that PartitionCounts were assigned to
+            List<String> partitionQueries = getPartitionQueries(topicQueryBins);
 
-        // Run the partition queries
-        for (String query: partitionQueries) {
-            final List<NewRelicQueryResult> queryResults;
+            // Run the partition queries
+            for (String query: partitionQueries) {
+                final List<NewRelicQueryResult> queryResults;
 
-            try {
-                System.out.printf("Partition Query: %s%n", query);
-                queryResults = _newRelicAdapter.runQuery(query);
-            } catch (IOException e) {
-                LOGGER.error("Error when attempting to query NRQL for metrics.", e);
-                throw new SamplingException("Could not query metrics from NRQL.");
-            }
-
-            for (NewRelicQueryResult result : queryResults) {
                 try {
-                    metricsAdded += addPartitionMetrics(result);
-                } catch (InvalidNewRelicResultException e) {
-                    // Unlike PrometheusMetricSampler, this form of exception is probably very unlikely since
-                    // we will be getting cleaned up and well formed data directly from NRDB, but just keeping
-                    // this check here anyway to be safe
-                    LOGGER.trace("Invalid query result received from New Relic for partition query {}", query, e);
-                    resultsSkipped++;
+                    System.out.printf("Partition Query: %s%n", query);
+                    queryResults = _newRelicAdapter.runQuery(query);
+                } catch (IOException e) {
+                    LOGGER.error("Error when attempting to query NRQL for metrics.", e);
+                    //throw new SamplingException("Could not query metrics from NRQL.");
+                    continue;
+                }
+
+                for (NewRelicQueryResult result : queryResults) {
+                    try {
+                        resultCounts[0] += addPartitionMetrics(result);
+                    } catch (InvalidNewRelicResultException e) {
+                        // Unlike PrometheusMetricSampler, this form of exception is probably very unlikely since
+                        // we will be getting cleaned up and well formed data directly from NRDB, but just keeping
+                        // this check here anyway to be safe
+                        LOGGER.trace("Invalid query result received from New Relic for partition query {}", query, e);
+                        resultCounts[1]++;
+                    }
                 }
             }
+        } catch (Exception e) {
+            LOGGER.error("Error when converting topics to bins.", e);
+        }
+    }
+
+    abstract static class KafkaSize implements Comparable<KafkaSize> {
+        private int _size;
+
+        KafkaSize(int size) {
+            _size = size;
         }
 
-        LOGGER.info("Added {} metric values. Skipped {} invalid query results.", metricsAdded, resultsSkipped);
-        return metricsAdded;
+        int getSize() {
+            return _size;
+        }
+
+        @Override
+        public int compareTo(KafkaSize other) {
+            return _size - other.getSize();
+        }
+
+        @Override
+        public String toString() {
+            return String.format("KafkaSize with size: %s", _size);
+        }
+    }
+
+    /**
+     * Used to store the number of brokers in each topic.
+     */
+    private static class BrokerSize extends KafkaSize {
+        private int _brokerId;
+
+        BrokerSize(int size, int brokerId) {
+            super(size);
+            _brokerId = brokerId;
+        }
+
+         int getBrokerId() {
+            return _brokerId;
+        }
+
+        @Override
+        public boolean equals(Object other) {
+            if (this == other) {
+                return true;
+            }
+            if (other == null || getClass() != other.getClass()) {
+                return false;
+            }
+            BrokerSize otherSize = (BrokerSize) other;
+            return this.hashCode() == otherSize.hashCode();
+        }
+
+        @Override
+        public int hashCode() {
+            return Objects.hash(_brokerId, getSize());
+        }
+
+        @Override
+        public String toString() {
+            return String.format("BrokerSize with brokerId %s and size: %s", _brokerId, getSize());
+        }
     }
 
     /**
@@ -177,31 +284,26 @@ public class NewRelicMetricSampler extends AbstractMetricSampler {
      * Note that size in this context refers to the number of
      * leaders and replicas of this topic.
      */
-    private static class TopicSize implements Comparable<TopicSize> {
+    private static class TopicSize extends KafkaSize {
         private String _topic;
-        private int _size;
         private int _brokerId;
         private boolean _isBrokerTopic;
 
         private TopicSize(String topic, int size) {
+            super(size);
             _topic = topic;
-            _size = size;
             _isBrokerTopic = false;
         }
 
         private TopicSize(String topic, int size, int brokerId) {
+            super(size);
             _topic = topic;
-            _size = size;
             _brokerId = brokerId;
             _isBrokerTopic = true;
         }
 
         private String getTopic() {
             return _topic;
-        }
-
-        private int getSize() {
-            return _size;
         }
 
         private int getBrokerId() {
@@ -213,11 +315,6 @@ public class NewRelicMetricSampler extends AbstractMetricSampler {
         }
 
         @Override
-        public int compareTo(TopicSize other) {
-            return _size - other.getSize();
-        }
-
-        @Override
         public boolean equals(Object other) {
             if (this == other) {
                 return true;
@@ -226,49 +323,86 @@ public class NewRelicMetricSampler extends AbstractMetricSampler {
                 return false;
             }
             TopicSize topicSizeOther = (TopicSize) other;
-            return compareTo(topicSizeOther) == 0
-                    && _topic.equals(topicSizeOther._topic)
-                    && _brokerId == topicSizeOther.getBrokerId();
+            return hashCode() == topicSizeOther.hashCode();
         }
 
         @Override
         public int hashCode() {
-            return Objects.hash(_topic, _size);
+            return Objects.hash(_topic, _brokerId, _isBrokerTopic, getSize());
+        }
+
+        @Override
+        public String toString() {
+            if (_isBrokerTopic) {
+                return String.format("TopicSize with topic %s and size: %s",
+                        _topic, getSize());
+            } else {
+                return String.format("TopicSize with brokerId %s, topic %s, and size: %s",
+                        _brokerId, _topic, getSize());
+            }
         }
     }
 
-    private static class PartitionQueryBin {
+    abstract static class NewRelicQueryBin {
         private int _currentSize;
-        List<TopicSize> _topics;
-        List<TopicSize> _brokerTopics;
+        private List<KafkaSize> _sizes;
 
-        private PartitionQueryBin() {
+        NewRelicQueryBin() {
+            _sizes = new ArrayList<>();
             _currentSize = 0;
-            _topics = new ArrayList<>();
-            _brokerTopics = new ArrayList<>();
         }
 
-        /**
-         * Attempts to add a new topic to this partition bin.
-         * If the topic is too large, we won't add it to
-         * this bin.
-         * @param topic - Topic which we are attempting to add
-         * @return - Whether or not we were able to add the topic
-         * to this bin.
-         */
-        private boolean addTopic(TopicSize topic) {
-            int topicSize = topic.getSize();
-            if (_currentSize + topicSize > MAX_SIZE) {
+        boolean addKafkaSize(KafkaSize newSize) {
+            int size = newSize.getSize();
+            if (_currentSize + size > MAX_SIZE) {
                 return false;
             } else {
-                _currentSize += topicSize;
-                if (topic.getIsBrokerTopic()) {
-                    _brokerTopics.add(topic);
-                } else {
-                    _topics.add(topic);
-                }
+                _currentSize += size;
+                _sizes.add(newSize);
                 return true;
             }
+        }
+
+        List<KafkaSize> getSizes() {
+            return _sizes;
+        }
+
+        abstract String generateStringForQuery();
+    }
+
+    static class BrokerQueryBin extends NewRelicQueryBin {
+        BrokerQueryBin() {
+            super();
+        }
+
+        @Override
+        String generateStringForQuery() {
+            if (getSizes().size() == 0) {
+                return "";
+            } else {
+                // We want this to be comma separated list of brokers
+                // Example: "WHERE broker IN (broker1, broker2, ...) "
+                StringBuffer brokerBuffer = new StringBuffer();
+                brokerBuffer.append("WHERE broker IN (");
+
+                List<KafkaSize> sizes = getSizes();
+                for (int i = 0; i < sizes.size() - 1; i++) {
+                    BrokerSize brokerSize = (BrokerSize) sizes.get(i);
+                    brokerBuffer.append(String.format("%s, ", brokerSize.getBrokerId()));
+                }
+
+                // Handle the last broker and add in parentheses + space instead of comma to finish
+                BrokerSize brokerSize = (BrokerSize) sizes.get(sizes.size() - 1);
+                brokerBuffer.append(String.format("%s) ", brokerSize.getBrokerId()));
+
+                return brokerBuffer.toString();
+            }
+        }
+    }
+
+    static class TopicQueryBin extends NewRelicQueryBin {
+        TopicQueryBin() {
+            super();
         }
 
         /**
@@ -276,49 +410,78 @@ public class NewRelicMetricSampler extends AbstractMetricSampler {
          * we generate a string of the topics separated by a comma and space
          * @return - String of topics separated by comma and space w/ no trailing comma or space
          */
-        private String generateTopicStringForQuery() {
+        @Override
+        String generateStringForQuery() {
+            ArrayList<TopicSize> topics = new ArrayList<>();
+            ArrayList<TopicSize> brokerTopics = new ArrayList<>();
+
+            for (KafkaSize size: getSizes()) {
+                TopicSize topicSize = (TopicSize) size;
+                if (topicSize.getIsBrokerTopic()) {
+                    brokerTopics.add(topicSize);
+                } else {
+                    topics.add(topicSize);
+                }
+            }
             // We want a comma on all but the last element so we will handle the last one separately
             // We want these topics to be in the format:
             // "topic IN ('topic1', 'topic2', ...)"
             StringBuffer topicBuffer = new StringBuffer();
-            if (_topics.size() > 0) {
+            if (topics.size() > 0) {
                 topicBuffer.append("topic IN (");
 
-                for (int i = 0; i < _topics.size() - 1; i++) {
-                    topicBuffer.append(String.format("'%s', ", _topics.get(i).getTopic()));
+                for (int i = 0; i < topics.size() - 1; i++) {
+                    topicBuffer.append(String.format("'%s', ", topics.get(i).getTopic()));
                 }
                 // Add in last element without a comma or space
-                topicBuffer.append(String.format("'%s')", _topics.get(_topics.size() - 1).getTopic()));
+                topicBuffer.append(String.format("'%s')", topics.get(topics.size() - 1).getTopic()));
             }
 
             // We want to combine broker topics into the format
             // "(topic = 'topic1' AND broker = brokerId1) OR (topic = 'topic2' AND broker = brokerId2) ..."
             StringBuffer topicBrokerBuffer = new StringBuffer();
-            if (_brokerTopics.size() > 0) {
-                if (_topics.size() > 0) {
+            if (brokerTopics.size() > 0) {
+                if (topics.size() > 0) {
                     topicBrokerBuffer.append(" OR ");
                 }
-                for (int i = 0; i < _brokerTopics.size() - 1; i++) {
+                for (int i = 0; i < brokerTopics.size() - 1; i++) {
                     topicBrokerBuffer.append(String.format("(topic = '%s' AND broker = %s) OR ",
-                            _brokerTopics.get(i).getTopic(), _brokerTopics.get(i).getBrokerId()));
+                            brokerTopics.get(i).getTopic(), brokerTopics.get(i).getBrokerId()));
                 }
                 // Add in last element without OR
                 topicBrokerBuffer.append(String.format("(topic = '%s' AND broker = %s)",
-                        _brokerTopics.get(_brokerTopics.size() - 1).getTopic(),
-                        _brokerTopics.get(_brokerTopics.size() - 1).getBrokerId()));
+                        brokerTopics.get(brokerTopics.size() - 1).getTopic(),
+                        brokerTopics.get(brokerTopics.size() - 1).getBrokerId()));
             }
 
             return topicBuffer + topicBrokerBuffer.toString();
         }
     }
 
-    private ArrayList<TopicSize> getSortedTopicByReplicaCount(Cluster cluster) {
+    private ArrayList<KafkaSize> getSortedBrokersByTopicCount(Cluster cluster) {
+        ArrayList<KafkaSize> brokerSizes = new ArrayList<>();
+
+        for (Node node: cluster.nodes()) {
+            HashSet<String> topicsInNode = new HashSet<>();
+            List<PartitionInfo> partitions = cluster.partitionsForNode(node.id());
+            for (PartitionInfo partition: partitions) {
+                topicsInNode.add(partition.topic());
+            }
+            brokerSizes.add(new BrokerSize(topicsInNode.size(), node.id()));
+        }
+
+        Collections.sort(brokerSizes);
+
+        return brokerSizes;
+    }
+
+    private ArrayList<KafkaSize> getSortedTopicsByReplicaCount(Cluster cluster) {
         Set<String> topics = cluster.topics();
 
         // Get the total number of leaders + replicas that are for this topic
         // Note that each leader and replica is counted as separately
         // since they are on different brokers and will require a different output from NRQL
-        ArrayList<TopicSize> topicSizes = new ArrayList<>();
+        ArrayList<KafkaSize> topicSizes = new ArrayList<>();
         for (String topic: topics) {
             int size = 0;
             for (PartitionInfo partitionInfo: cluster.partitionsForTopic(topic)) {
@@ -353,23 +516,16 @@ public class NewRelicMetricSampler extends AbstractMetricSampler {
         return topicSizes;
     }
 
-    /**
-     * Using the first fit decreasing algorithm that is used to solve BinPacking
-     * problems such as this one. See this link: https://sites.cs.ucsb.edu/~suri/cs130b/BinPacking
-     * for more information on this algorithm and also the optimality of the algorithm.
-     * @param topicSizes - List of topics paired with their number of leader and replica partitions
-     * @return -> Assigning these topicSizes to different queries all with total leader and replica
-     * counts below the limit requirement for NRQL.
-     */
-    private List<PartitionQueryBin> assignToBins(List<TopicSize> topicSizes) {
-        List<PartitionQueryBin> queryBins = new ArrayList<>();
+    private List<NewRelicQueryBin> assignToBins(List<KafkaSize> kafkaSizes, Class<?> binType)
+            throws InstantiationException, IllegalAccessException {
+        List<NewRelicQueryBin> queryBins = new ArrayList<>();
 
         // Since topicSizes is ordered in ascending order, we traverse it backwards
-        for (int i = topicSizes.size() - 1; i >= 0; i--) {
-            TopicSize topicSize = topicSizes.get(i);
+        for (int i = kafkaSizes.size() - 1; i >= 0; i--) {
+            KafkaSize kafkaSize = kafkaSizes.get(i);
             boolean added = false;
-            for (PartitionQueryBin queryBin: queryBins) {
-                if (queryBin.addTopic(topicSize)) {
+            for (NewRelicQueryBin queryBin: queryBins) {
+                if (queryBin.addKafkaSize(kafkaSize)) {
                     added = true;
                     break;
                 }
@@ -378,21 +534,32 @@ public class NewRelicMetricSampler extends AbstractMetricSampler {
             // If we couldn't add the topic to any of the previous bins,
             // create a new bin and add the topic to that bin
             if (!added) {
-                PartitionQueryBin newBin = new PartitionQueryBin();
-                if (!newBin.addTopic(topicSize)) {
-                    // FIXME throw an exception here
+                NewRelicQueryBin newBin = (NewRelicQueryBin) binType.newInstance();
+                added = newBin.addKafkaSize(kafkaSize);
+                if (!added) {
+                    LOGGER.error("Size object has too many items: {}",
+                            kafkaSize);
+                } else {
+                    queryBins.add(newBin);
                 }
-                queryBins.add(newBin);
             }
         }
 
         return queryBins;
     }
 
-    private List<String> getPartitionQueries(List<PartitionQueryBin> queryBins) {
+    private List<String> getPartitionQueries(List<NewRelicQueryBin> queryBins) {
         List<String> queries = new ArrayList<>();
-        for (PartitionQueryBin queryBin: queryBins) {
-            queries.add(NewRelicQuerySupplier.partitionQuery(queryBin.generateTopicStringForQuery()));
+        for (NewRelicQueryBin queryBin: queryBins) {
+            queries.add(NewRelicQuerySupplier.partitionQuery(queryBin.generateStringForQuery()));
+        }
+        return queries;
+    }
+
+    private List<String> getTopicQueries(List<NewRelicQueryBin> queryBins) {
+        List<String> queries = new ArrayList<>();
+        for (NewRelicQueryBin queryBin: queryBins) {
+            queries.add(NewRelicQuerySupplier.topicQuery(queryBin.generateStringForQuery()));
         }
         return queries;
     }

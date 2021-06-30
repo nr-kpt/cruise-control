@@ -34,7 +34,6 @@ import java.util.Arrays;
 import java.util.concurrent.TimeUnit;
 
 import static com.linkedin.kafka.cruisecontrol.metricsreporter.metric.RawMetricType.MetricScope.BROKER;
-import static com.linkedin.kafka.cruisecontrol.metricsreporter.metric.RawMetricType.MetricScope.TOPIC;
 import static com.linkedin.kafka.cruisecontrol.monitor.sampling.newrelic.NewRelicMetricSampler.*;
 import static org.easymock.EasyMock.*;
 import static org.junit.Assert.assertEquals;
@@ -60,7 +59,6 @@ public class NewRelicMetricSamplerTest {
 
     private NewRelicMetricSampler _newRelicMetricSampler;
     private NewRelicAdapter _newRelicAdapter;
-    private Map<RawMetricType.MetricScope, String> _queryMap;
 
     /**
      * Set up mocks
@@ -69,7 +67,6 @@ public class NewRelicMetricSamplerTest {
     public void setUp() {
         _newRelicAdapter = mock(NewRelicAdapter.class);
         _newRelicMetricSampler = new NewRelicMetricSampler();
-        _queryMap = new NewRelicQuerySupplier().get();
     }
 
     @Test(expected = ConfigException.class)
@@ -127,18 +124,47 @@ public class NewRelicMetricSamplerTest {
         partitions.add(5);
 
         setUp();
-        MetricSamplerOptions metricSamplerOptions = buildMetricSamplerOptions(topics, partitions);
+        MetricSamplerOptions metricSamplerOptions = buildMetricSamplerOptions(TOTAL_BROKERS, topics, partitions);
         _newRelicMetricSampler.configure(config);
         _newRelicMetricSampler._newRelicAdapter = _newRelicAdapter;
 
-        setupNewRelicAdapterMock(buildBrokerResults(),
-                buildTopicResults(topics), buildPartitionResults(topics, partitions));
+        setupNewRelicAdapterMock(buildBrokerResults(TOTAL_BROKERS),
+                buildTopicResults(TOTAL_BROKERS, topics), buildPartitionResults(TOTAL_BROKERS, topics, partitions));
 
         replay(_newRelicAdapter);
-        //MetricSampler.Samples samples = _newRelicMetricSampler.getSamples(metricSamplerOptions);
-        _newRelicMetricSampler.getSamples(metricSamplerOptions);
+        MetricSampler.Samples samples = _newRelicMetricSampler.getSamples(metricSamplerOptions);
 
-        //assertSamplesValid(samples, topics);
+        assertSamplesValid(samples, topics);
+        verify(_newRelicAdapter);
+    }
+
+    // Constructing NRQL queries correctly
+    // Constructing correct number of NRQL queries
+
+    @Test
+    public void testTooManyReplicas() throws Exception {
+        Map<String, Object> config = new HashMap<>();
+        setConfigs(config, 2);
+        addCapacityConfig(config);
+
+        ArrayList<String> topics = new ArrayList<>();
+        topics.add(TEST_TOPIC1);
+
+        ArrayList<Integer> partitions = new ArrayList<>();
+        partitions.add(3);
+
+        setUp();
+        MetricSamplerOptions metricSamplerOptions = buildMetricSamplerOptions(TOTAL_BROKERS, topics, partitions);
+        _newRelicMetricSampler.configure(config);
+        _newRelicMetricSampler._newRelicAdapter = _newRelicAdapter;
+
+        setupNewRelicAdapterMock(buildBrokerResults(TOTAL_BROKERS),
+                buildTopicResults(TOTAL_BROKERS, topics), buildPartitionResults(TOTAL_BROKERS, topics, partitions));
+
+        replay(_newRelicAdapter);
+        MetricSampler.Samples samples = _newRelicMetricSampler.getSamples(metricSamplerOptions);
+
+        assertSamplesValid(samples, topics);
         verify(_newRelicAdapter);
     }
 
@@ -154,10 +180,12 @@ public class NewRelicMetricSamplerTest {
         addCapacityConfig(config);
     }
 
-    private static MetricSamplerOptions buildMetricSamplerOptions(ArrayList<String> topics, ArrayList<Integer> partitions) {
+    private static MetricSamplerOptions buildMetricSamplerOptions(int numBrokers,
+                                                                  ArrayList<String> topics,
+                                                                  ArrayList<Integer> partitions) {
 
         return new MetricSamplerOptions(
-                generateCluster(topics, partitions),
+                generateCluster(numBrokers, topics, partitions),
                 generatePartitions(topics, partitions),
                 START_TIME_MS,
                 END_TIME_MS,
@@ -184,37 +212,62 @@ public class NewRelicMetricSamplerTest {
     private void setupNewRelicAdapterMock(List<NewRelicQueryResult> brokerResults,
                                           List<NewRelicQueryResult> topicResults,
                                           List<NewRelicQueryResult> partitionResults) throws IOException {
-            expect(_newRelicAdapter.runQuery(eq(new NewRelicQuerySupplier().get().get(BROKER))))
+            expect(_newRelicAdapter.runQuery(eq(NewRelicQuerySupplier.brokerQuery())))
                     .andReturn(brokerResults);
-            expect(_newRelicAdapter.runQuery(eq(new NewRelicQuerySupplier().get().get(TOPIC))))
-                    .andReturn(topicResults);
-            expect(_newRelicAdapter.runQuery(contains("FROM Metric")))
+            expect(_newRelicAdapter.runQuery(startsWith("FROM KafkaBrokerTopicStats SELECT max(messagesInPerSec), "
+                    + "max(bytesInPerSec), max(bytesOutPerSec), max(totalProduceRequestsPerSec), "
+                    + "max(totalFetchRequestsPerSec) WHERE cluster = 'test-odd-wire-kafka'")))
+                    .andReturn(topicResults).anyTimes();
+
+            String beforePattern = "FROM Metric SELECT max\\(kafka_log_Log_Value_Size\\) "
+                    + "WHERE entity.name = '.*' WHERE ";
+            String afterPattern = " FACET broker, topic, partition SINCE 1 minute ago LIMIT MAX";
+            String partitionMatcher = beforePattern + ".*" + afterPattern;
+            expect(_newRelicAdapter.runQuery(matches(partitionMatcher)))
                     .andReturn(partitionResults).anyTimes();
     }
 
-    private static List<NewRelicQueryResult> buildBrokerResults() {
+    private static List<NewRelicQueryResult> buildBrokerResults(int numBrokers) {
         List<NewRelicQueryResult> resultList = new ArrayList<>();
-        for (int brokerId = 0; brokerId < TOTAL_BROKERS; brokerId++) {
+        for (int brokerId = 0; brokerId < numBrokers; brokerId++) {
             Map<RawMetricType, Double> results = new HashMap<>();
-            // FIXME -> put values into results
+            for (RawMetricType type: RawMetricType.allMetricTypes()) {
+                if (type.metricScope() == BROKER) {
+                    results.put(type, Math.random());
+                }
+            }
             resultList.add(new NewRelicQueryResult(brokerId, results));
         }
         return resultList;
     }
 
-    private static List<NewRelicQueryResult> buildTopicResults(ArrayList<String> topics) {
+    private static List<NewRelicQueryResult> buildTopicResults(int numBrokers, ArrayList<String> topics) {
         List<NewRelicQueryResult> resultList = new ArrayList<>();
-        for (int brokerId = 0; brokerId < TOTAL_BROKERS; brokerId++) {
-            // FIXME
+        for (int brokerId = 0; brokerId < numBrokers; brokerId++) {
+            for (String topic: topics) {
+                Map<RawMetricType, Double> results = new HashMap<>();
+                for (RawMetricType type: RawMetricType.topicMetricTypes()) {
+                    results.put(type, Math.random());
+                }
+                resultList.add(new NewRelicQueryResult(brokerId, topic, results));
+            }
         }
         return resultList;
     }
 
-    private static List<NewRelicQueryResult> buildPartitionResults(ArrayList<String> topics,
+    private static List<NewRelicQueryResult> buildPartitionResults(int numBrokers, ArrayList<String> topics,
                                                                    ArrayList<Integer> partitions) {
         List<NewRelicQueryResult> resultList = new ArrayList<>();
-        for (int brokerId = 0; brokerId < TOTAL_BROKERS; brokerId++) {
-            // FIXME
+        for (int brokerId = 0; brokerId < numBrokers; brokerId++) {
+            for (int i = 0; i < topics.size(); i++) {
+                for (int partition = 0; partition < partitions.get(i); partition++) {
+                    Map<RawMetricType, Double> results = new HashMap<>();
+                    for (RawMetricType type : RawMetricType.partitionMetricTypes()) {
+                        results.put(type, Math.random());
+                    }
+                    resultList.add(new NewRelicQueryResult(brokerId, topics.get(i), partition, results));
+                }
+            }
         }
         return resultList;
     }
@@ -246,7 +299,6 @@ public class NewRelicMetricSamplerTest {
 
     private static Set<TopicPartition> generatePartitions(ArrayList<String> topics, ArrayList<Integer> partitions) {
         Set<TopicPartition> set = new HashSet<>();
-        // For each topic add the same number of partitions
         for (int i = 0; i < topics.size(); i++) {
             for (int partition = 0; partition < partitions.get(i); partition++) {
                 TopicPartition topicPartition = new TopicPartition(topics.get(i), partition);
@@ -256,16 +308,16 @@ public class NewRelicMetricSamplerTest {
         return set;
     }
 
-    private static Cluster generateCluster(ArrayList<String> topics, ArrayList<Integer> partitions) {
-        Node[] allNodes = new Node[TOTAL_BROKERS];
-        Set<PartitionInfo> partitionInfo = new HashSet<>(TOTAL_BROKERS);
-        for (int brokerId = 0; brokerId < TOTAL_BROKERS; brokerId++) {
+    private static Cluster generateCluster(int numBrokers, ArrayList<String> topics, ArrayList<Integer> partitions) {
+        Node[] allNodes = new Node[numBrokers];
+        Set<PartitionInfo> partitionInfo = new HashSet<>(numBrokers);
+        for (int brokerId = 0; brokerId < numBrokers; brokerId++) {
             allNodes[brokerId] = new Node(brokerId, "broker-" + brokerId + ".test-cluster.org", 9092);
         }
         for (int i = 0; i < topics.size(); i++) {
             for (int partitionId = 0; partitionId < partitions.get(i); partitionId++) {
                 partitionInfo.add(new PartitionInfo(topics.get(i), partitionId,
-                        allNodes[partitionId % TOTAL_BROKERS], allNodes, allNodes));
+                        allNodes[partitionId % numBrokers], allNodes, allNodes));
             }
         }
         return new Cluster("cluster_id", Arrays.asList(allNodes),

@@ -6,19 +6,18 @@ package com.linkedin.kafka.cruisecontrol.monitor.sampling.newrelic;
 
 import java.util.HashMap;
 import java.util.Map;
-import java.util.function.Supplier;
 import com.linkedin.kafka.cruisecontrol.metricsreporter.metric.RawMetricType;
 
 import static com.linkedin.kafka.cruisecontrol.metricsreporter.metric.RawMetricType.*;
-import static com.linkedin.kafka.cruisecontrol.metricsreporter.metric.RawMetricType.MetricScope.BROKER;
-import static com.linkedin.kafka.cruisecontrol.metricsreporter.metric.RawMetricType.MetricScope.TOPIC;
 
 /**
  * Contains the NRQL queries which will output broker, topic, and partition level
  * stats which are used by cruise control.
  */
-public class NewRelicQuerySupplier implements Supplier<Map<RawMetricType.MetricScope, String>> {
-    private static final Map<RawMetricType.MetricScope, String> TYPE_TO_QUERY = new HashMap<>();
+public final class NewRelicQuerySupplier {
+    private NewRelicQuerySupplier() {
+        // Not called
+    }
 
     // Currently we are hardcoding this in -> later need to make it specific to whatever cluster
     // this cruise control instance is running on
@@ -38,6 +37,7 @@ public class NewRelicQuerySupplier implements Supplier<Map<RawMetricType.MetricS
     private static final String TOPIC_QUERY = "FROM KafkaBrokerTopicStats "
             + "SELECT %s "
             + "WHERE cluster = '%s' "
+            + "%s"
             + "AND topic is NOT NULL "
             + "FACET broker, topic "
             + "SINCE 1 minute ago "
@@ -51,16 +51,36 @@ public class NewRelicQuerySupplier implements Supplier<Map<RawMetricType.MetricS
             + "SINCE 1 minute ago "
             + "LIMIT MAX";
 
-    public static String brokerQuery(String select) {
+    public static String brokerQuery() {
+        return brokerQueryFormat(generateFeatures(BROKER_METRICS));
+    }
+
+    private static String brokerQueryFormat(String select) {
         return String.format(BROKER_QUERY, select, CLUSTER_NAME);
     }
 
-    public static String topicQuery(String select) {
-        return String.format(TOPIC_QUERY, select, CLUSTER_NAME);
+    public static String topicQuery(String brokerSelect) {
+        return topicQueryFormat(generateFeatures(TOPIC_METRICS), brokerSelect);
     }
 
-    public static String partitionQuery(String topics) {
-        return String.format(PARTITION_QUERY, CLUSTER_NAME, topics);
+    private static String topicQueryFormat(String select, String brokerSelect) {
+        return String.format(TOPIC_QUERY, select, CLUSTER_NAME, brokerSelect);
+    }
+
+    public static String partitionQuery(String whereClause) {
+        return String.format(PARTITION_QUERY, CLUSTER_NAME, whereClause);
+    }
+
+    public static Map<String, RawMetricType> getBrokerMap() {
+        return BROKER_METRICS;
+    }
+
+    public static Map<String, RawMetricType> getTopicMap() {
+        return TOPIC_METRICS;
+    }
+
+    public static Map<String, RawMetricType> getPartitionMap() {
+        return PARTITION_METRICS;
     }
 
     private static String generateFeatures(Map<String, RawMetricType> metrics) {
@@ -147,25 +167,5 @@ public class NewRelicQuerySupplier implements Supplier<Map<RawMetricType.MetricS
 
         // partition level metrics
         PARTITION_METRICS.put("kafka_log_Log_Value_Size", PARTITION_SIZE);
-
-        // Create the actual queries we want to run and save them
-        TYPE_TO_QUERY.put(BROKER, brokerQuery(generateFeatures(BROKER_METRICS)));
-        TYPE_TO_QUERY.put(TOPIC, topicQuery(generateFeatures(TOPIC_METRICS)));
-    }
-
-    public static Map<String, RawMetricType> getBrokerMap() {
-        return BROKER_METRICS;
-    }
-
-    public static Map<String, RawMetricType> getTopicMap() {
-        return TOPIC_METRICS;
-    }
-
-    public static Map<String, RawMetricType> getPartitionMap() {
-        return PARTITION_METRICS;
-    }
-
-    @Override public Map<RawMetricType.MetricScope, String> get() {
-        return TYPE_TO_QUERY;
     }
 }
